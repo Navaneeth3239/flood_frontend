@@ -1,0 +1,2485 @@
+import { deleteArea } from "@/services/deleteArea";
+import { useMemo, useState, useEffect, useRef } from "react";
+import L from "leaflet";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useLocation, useNavigate, Navigate } from "react-router-dom";
+import { toast } from "sonner";
+import { CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, Bar, BarChart, AreaChart, Area, LineChart, Line, Legend, Cell } from "recharts";
+import { Map as MapIcon, Radio, Waves, Trash2, ZoomIn, Globe, ArrowRight, MousePointerClick, Sparkles, Box, CloudRain, ShieldAlert, Phone, MapPin, User, Clock, CheckCircle, RefreshCw, Layers, Mountain, Building2, TrendingUp, AlertTriangle, Eye, ExternalLink, Activity } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { buttonVariants } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import GISMap, { DEFAULT_LAYERS, type GISLayerState } from "@/components/gis/GISMap";
+import { EmptyState, LoadingRows, LoadingSymbol, PageHeader, RiskIndicator, SectionCard, StatCard, StatusPill } from "@/components/Primitives";
+import { apiGet, apiPatch } from "@/lib/api";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { MobileSosRequest } from "@/components/dashboard/BatteryAndAlerts";
+import { HAZARD_LABELS, SENSOR_LABELS, type Alert, type NetworkStats, type Sensor, type Zone } from "@/lib/types";
+
+// New Dashboard Components
+import { SystemStatusHeader } from "@/components/dashboard/SystemStatusHeader";
+import { NetworkOverviewKPIs } from "@/components/dashboard/NetworkOverviewKPIs";
+
+import { LiveSensorMonitoring } from "@/components/dashboard/LiveSensorMonitoring";
+import { AccelerometerGraph } from "@/components/dashboard/AccelerometerGraph";
+
+
+import { BatteryAndAlerts } from "@/components/dashboard/BatteryAndAlerts";
+import { SensorManagementSection } from "@/components/dashboard/SensorManagementSection";
+
+const AXIS = { stroke: "#94A3B8", fontSize: 11 };
+
+function useNetwork() {
+  const zones = useQuery({ queryKey: ["zones"], queryFn: () => apiGet<Zone[]>("/zones"), retry: false });
+  const sensors = useQuery({ queryKey: ["sensors"], queryFn: () => apiGet<Sensor[]>("/sensors"), retry: false });
+  const stats = useQuery({ queryKey: ["stats"], queryFn: () => apiGet<NetworkStats>("/stats"), retry: false });
+  const alerts = useQuery({ queryKey: ["alerts"], queryFn: () => apiGet<Alert[]>("/alerts"), retry: false });
+  return { zones, sensors, stats, alerts };
+}
+
+export function EnvironmentalMonitoringSection() {
+  const { sensors, zones } = useNetwork();
+  const [zoneId, setZoneId] = useState<string>("");
+  const list = useMemo(
+    () => (sensors.data ?? []).filter((s) => !zoneId || s.zone_id === zoneId),
+    [sensors.data, zoneId],
+  );
+
+  return (
+    <div className="space-y-4" data-testid="dashboard-environmental-section">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-bold text-slate-900">Environmental Sensor Monitoring</h3>
+          <p className="text-xs text-slate-500">Live LoRa uplink telemetry readings from all deployed field nodes.</p>
+        </div>
+        <div className="flex flex-wrap gap-2" data-testid="environmental-zone-filters">
+          <button
+            onClick={() => setZoneId("")}
+            className={`rounded-full border px-3 py-1 text-xs font-semibold cursor-pointer transition-colors ${
+              zoneId === "" ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            All Zones
+          </button>
+          {(zones.data ?? []).map((z) => (
+            <button
+              key={z.id}
+              onClick={() => setZoneId(z.id)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold cursor-pointer transition-colors ${
+                zoneId === z.id ? "border-emerald-600 bg-emerald-600 text-white" : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {z.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <SectionCard testId="dashboard-environmental-readings-card" title="Live Field Telemetry" description={`${list.length} sensor nodes reporting in real time`}>
+        {sensors.isLoading ? (
+          <LoadingRows rows={5} />
+        ) : list.length === 0 ? (
+          <EmptyState testId="environmental-empty" title="No sensor readings" description="No nodes are registered for this zone yet." />
+        ) : (
+          <Table data-testid="dashboard-environmental-readings-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Node Code</TableHead>
+                <TableHead>Sensor Type</TableHead>
+                <TableHead>Monitored Zone</TableHead>
+                <TableHead>Telemetry Reading</TableHead>
+                <TableHead>Battery Level</TableHead>
+                <TableHead>Connection Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {list.map((s) => (
+                <TableRow key={s.id} data-testid={`sensor-row-${s.code}`}>
+                  <TableCell className="font-mono text-xs font-semibold">{s.code}</TableCell>
+                  <TableCell>{SENSOR_LABELS[s.sensor_type] ?? s.sensor_type}</TableCell>
+                  <TableCell className="text-xs text-slate-500">{s.zone_name}</TableCell>
+                  <TableCell className="font-mono font-semibold">{s.last_value} {s.unit}</TableCell>
+                  <TableCell className="font-mono text-xs">{s.battery}%</TableCell>
+                  <TableCell><StatusPill status={s.status} testId={`sensor-status-${s.code}`} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </SectionCard>
+    </div>
+  );
+}
+
+export function DashboardPage() {
+  useEffect(() => {
+    toast.success("Logged in successfully in test account", {
+      id: "test-account-login",
+      duration: 5000,
+    });
+  }, []);
+
+  return (
+    <div className="flex flex-col gap-8 bg-slate-50 min-h-screen pb-12" data-testid="dashboard-page">
+      <SystemStatusHeader />
+      
+      <div className="px-4 sm:px-6 space-y-8 max-w-[1600px] mx-auto w-full">
+        <NetworkOverviewKPIs />
+        
+        <hr className="border-slate-200" />
+        <LiveSensorMonitoring />
+        
+        <hr className="border-slate-200" />
+        <AccelerometerGraph />
+        
+        <hr className="border-slate-200" />
+        <BatteryAndAlerts />
+
+        <hr className="border-slate-200" />
+        <SensorManagementSection />
+      </div>
+    </div>
+  );
+}
+
+import { Button } from "@/components/ui/button";
+import { calculatePolygonAreaSqMeters, formatArea, parseCustomAreaPolygon } from "@/lib/gisUtils";
+import type { CustomArea } from "@/lib/types";
+
+const LAYER_ROWS: { key: keyof GISLayerState; label: string }[] = [
+  { key: "customAreas", label: "Custom Monitored Areas" },
+  { key: "areaLabels", label: "Area Names & Measurements" },
+  { key: "boundaries", label: "Center Marker Badges" },
+  { key: "mobileTowers", label: "Mobile Network Towers" },
+  { key: "satellite", label: "Satellite Imagery Layer" },
+];
+
+const getAreaThumbnail = (type: string) => {
+  const t = type?.toLowerCase() || "";
+  if (t.includes("forest")) return "https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&q=60&w=400";
+  if (t.includes("river") || t.includes("basin") || t.includes("water")) return "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&q=60&w=400";
+  if (t.includes("urban") || t.includes("city")) return "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?auto=format&fit=crop&q=60&w=400";
+  return "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&q=60&w=400";
+};
+
+function getShapeClipStyle(shape: string): React.CSSProperties {
+  const s = shape?.toLowerCase() || "";
+  if (s === "circle") return { borderRadius: "50%", overflow: "hidden" };
+  if (s === "hexagon") return { clipPath: "polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)", overflow: "hidden" };
+  return { overflow: "hidden" }; // rectangle, square
+}
+
+function MiniSatelliteMap({
+  lat,
+  lng,
+}: {
+  polygon?: [number, number][];
+  shape?: string;
+  lat: number;
+  lng: number;
+  risk?: string;
+}) {
+  const mapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const container = mapRef.current;
+    if ((container as any)._leaflet_id) return;
+
+    const center: [number, number] = [Number(lat), Number(lng)];
+
+    const map = L.map(container, {
+      center: center,
+      zoom: 14,
+      zoomControl: false,
+      attributionControl: false,
+      dragging: false,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      boxZoom: false,
+      touchZoom: false,
+    });
+
+    L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+      maxZoom: 19,
+    }).addTo(map);
+
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+      map.setView(center, 14);
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+      map.remove();
+    };
+  }, [lat, lng]);
+
+  return (
+    <div style={{ width: "100%", height: "100%", overflow: "hidden" }} className="relative">
+      <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
+    </div>
+  );
+}
+
+interface MonitoredAreaDetailsContentProps {
+  selectedArea: CustomArea | null;
+  customAreas: CustomArea[];
+  loadingAreas?: boolean;
+  onSelectArea: (area: CustomArea) => void;
+  onDeleteTarget: (area: CustomArea) => void;
+  onDrawMode: (v: boolean) => void;
+  onFocusArea: (area: CustomArea) => void;
+  onResetFocus: () => void;
+  creatingTwin: boolean;
+  handleCreateDigitalTwin: (area: CustomArea | null) => void;
+}
+
+function MonitoredAreaDetailsContent({
+  selectedArea,
+  customAreas,
+  loadingAreas,
+  onSelectArea,
+  onDeleteTarget,
+  onDrawMode,
+  onFocusArea,
+  onResetFocus,
+  creatingTwin,
+  handleCreateDigitalTwin,
+}: MonitoredAreaDetailsContentProps) {
+  if (!selectedArea) {
+    return (
+      <div className="flex flex-col justify-between h-full">
+        <div>
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Monitored Area</p>
+            <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-full">
+              {customAreas.length} {customAreas.length === 1 ? "Area" : "Areas"}
+            </span>
+          </div>
+
+          <div className="mt-6 flex flex-col items-center justify-center text-center px-1">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-2xl shadow-xs mb-3 text-emerald-700">
+              <MousePointerClick className="size-7 text-emerald-700" />
+            </div>
+            <h4 className="text-sm font-bold text-slate-900 mb-1">Select an Area on the Map</h4>
+            <p className="text-xs text-slate-500 max-w-[240px] leading-relaxed mb-5">
+              Click on any monitored boundary directly on the map or choose an area below to view its real-time satellite data.
+            </p>
+
+            {loadingAreas && customAreas.length === 0 ? (
+              <LoadingSymbol size="sm" label="Loading monitored zones..." />
+            ) : customAreas.length > 0 ? (
+              <div className="w-full text-left">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  Registered Monitored Areas:
+                </p>
+                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-0.5">
+                  {customAreas.map((area) => (
+                    <button
+                      key={area.id}
+                      type="button"
+                      onClick={() => onSelectArea(area)}
+                      className="w-full flex items-center justify-between p-2.5 rounded-lg border border-slate-200 hover:border-emerald-600 hover:bg-emerald-50/70 transition-all text-left group cursor-pointer"
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="text-xs font-bold text-slate-800 group-hover:text-emerald-700 truncate">
+                          {area.name}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {area.district} · {formatArea(area.areaSqMeters).sqKmFormatted}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[9px] uppercase font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                          area.risk === "Critical"
+                            ? "bg-red-100 text-red-700"
+                            : area.risk === "High"
+                            ? "bg-orange-100 text-orange-700"
+                            : area.risk === "Medium"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-emerald-100 text-emerald-700"
+                        }`}
+                      >
+                        {area.risk}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-5 pt-3 border-t border-slate-100 text-center">
+          <Button
+            onClick={() => onDrawMode(true)}
+            variant="outline"
+            className="w-full text-xs font-semibold border-dashed border-slate-300 text-emerald-700 hover:bg-emerald-50 cursor-pointer"
+          >
+            + Measure / Draw New Area
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col justify-between h-full space-y-4">
+      <div>
+        {/* Header with Title and Delete Button */}
+        <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+          <div className="min-w-0 pr-2">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">Selected Monitored Area</p>
+            <h3 className="text-base font-bold text-slate-900 mt-0.5 truncate" data-testid="selected-location-name">
+              {selectedArea.name}
+            </h3>
+            <p className="text-xs text-slate-500 truncate">{selectedArea.district}</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300 px-2.5 py-1 h-auto font-semibold transition-colors cursor-pointer shrink-0"
+            onClick={() => onDeleteTarget(selectedArea)}
+            title="Delete this monitored area"
+          >
+            <Trash2 className="size-3.5 mr-1" />
+            Delete
+          </Button>
+        </div>
+
+        <div className="mt-3.5 space-y-3.5">
+          <div className="flex items-center justify-between">
+            <span
+              className={`text-[10px] uppercase font-bold px-2.5 py-0.5 rounded-full ${
+                selectedArea.risk === "Critical"
+                  ? "bg-red-100 text-red-700 border border-red-200"
+                  : selectedArea.risk === "High"
+                  ? "bg-orange-100 text-orange-700 border border-orange-200"
+                  : selectedArea.risk === "Medium"
+                  ? "bg-amber-100 text-amber-800 border border-amber-200"
+                  : "bg-emerald-100 text-emerald-700 border border-emerald-200"
+              }`}
+            >
+              {selectedArea.risk} Risk
+            </span>
+            <span className="text-xs text-slate-600 font-medium bg-slate-100 px-2 py-0.5 rounded">
+              {selectedArea.type}
+            </span>
+          </div>
+
+          {/* Calculated Area Highlight */}
+          <div className="bg-emerald-50/90 border border-emerald-200/90 rounded-xl p-3">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Calculated Surface Area</div>
+            <div className="text-lg font-black text-emerald-700 font-mono mt-0.5">
+              {formatArea(selectedArea.areaSqMeters).sqMetersFormatted}
+            </div>
+            <div className="text-xs font-semibold text-emerald-600 mt-0.5">
+              {formatArea(selectedArea.areaSqMeters).sqKmFormatted}
+            </div>
+          </div>
+
+          {/* Zoom to Land View Buttons */}
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              className="flex-1 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs cursor-pointer"
+              onClick={() => onFocusArea(selectedArea)}
+            >
+              <ZoomIn className="size-3.5 mr-1" />
+              Zoom Land
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs border-slate-200 text-slate-700 hover:bg-slate-100 font-semibold cursor-pointer"
+              onClick={onResetFocus}
+            >
+              <Globe className="size-3.5 mr-1" />
+              Full India
+            </Button>
+          </div>
+
+          <dl className="space-y-2 text-xs border-t border-slate-100 pt-2.5">
+            {[
+              ["Priority Level", selectedArea.priority],
+              ["Center Coordinates", `${selectedArea.lat.toFixed(4)}, ${selectedArea.lng.toFixed(4)}`],
+              ["Boundary Points", `${selectedArea.polygon?.length || 0} coordinates`],
+              ["Boundary Type", "Custom Area Boundary"],
+              ["Registered Date", selectedArea.date],
+            ].map(([k, v]) => (
+              <div key={k} className="flex items-center justify-between border-b border-slate-50 pb-1.5">
+                <dt className="text-slate-500">{k}</dt>
+                <dd className="font-mono font-semibold text-slate-900">{v}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {selectedArea.description && (
+            <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+              {selectedArea.description}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* High-impact Attractive Satellite View Button & Create Digital Twin Button */}
+      <div className="pt-2 space-y-3">
+        <Button
+          disabled={creatingTwin}
+          onClick={() => handleCreateDigitalTwin(selectedArea)}
+          className="w-full text-sm font-bold text-white bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 hover:from-emerald-700 hover:to-cyan-800 py-4 px-4 rounded-xl shadow-lg transition-all duration-200 hover:shadow-xl hover:scale-[1.02] active:scale-[0.99] flex items-center justify-center gap-2.5 cursor-pointer border border-emerald-400/40 text-center"
+          title="Open 3D Digital Twin for this area"
+        >
+          {creatingTwin ? (
+            <>
+              <span className="inline-block size-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span>Opening Digital Twin…</span>
+            </>
+          ) : (
+            <>
+              <Box className="size-5 text-white" />
+              <span className="tracking-wide">Create Digital Twin</span>
+              <ArrowRight className="size-4" />
+            </>
+          )}
+        </Button>
+
+        <Link
+          to="/area"
+          state={{ area: selectedArea }}
+          className="group relative overflow-hidden w-full text-xs font-bold text-white bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-800 hover:from-emerald-700 hover:to-emerald-900 py-3 px-4 rounded-xl text-center transition-all duration-200 shadow-sm hover:shadow-md flex items-center justify-center gap-2 cursor-pointer border border-emerald-400/40"
+        >
+          <span className="text-base animate-pulse">🛰️</span>
+          <span className="tracking-wide">Inspect Detailed Satellite View</span>
+          <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" />
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+export function GISMonitoringPage() {
+  const mapTopRef = useRef<HTMLDivElement | null>(null);
+  const location = useLocation();
+  const locationState = location.state as {
+    focusCoordinates?: [number, number];
+    focusTitle?: string;
+    focusSubtitle?: string;
+  } | null;
+
+  const [layers, setLayers] = useState<GISLayerState>(() => {
+    const saved = localStorage.getItem("gis_layers_state");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return DEFAULT_LAYERS;
+  });
+
+  useEffect(() => {
+    localStorage.setItem("gis_layers_state", JSON.stringify(layers));
+  }, [layers]);
+
+  const [selectedArea, setSelectedArea] = useState<CustomArea | null>(null);
+  const [focusedArea, setFocusedArea] = useState<CustomArea | null>(null);
+  const navigate = useNavigate();
+  const [creatingTwin, setCreatingTwin] = useState(false);
+
+  const handleCreateDigitalTwin = async (areaToTwin: CustomArea | null) => {
+    if (!areaToTwin) {
+      toast.error("Please select a monitored area on the map first.");
+      return;
+    }
+    setCreatingTwin(true);
+    try {
+      const coords =
+        areaToTwin.polygon && areaToTwin.polygon.length >= 3
+          ? areaToTwin.polygon
+          : parseCustomAreaPolygon(areaToTwin.shape, areaToTwin.lat, areaToTwin.lng);
+
+      const baseLat = Number(areaToTwin.lat || 10.66);
+      const baseLng = Number(areaToTwin.lng || 77.00);
+      let north = baseLat + 0.008;
+      let south = baseLat - 0.008;
+      let east = baseLng + 0.008;
+      let west = baseLng - 0.008;
+
+      if (coords && coords.length >= 3) {
+        const lats = coords.map((c: [number, number]) => Number(c[0]));
+        const lngs = coords.map((c: [number, number]) => Number(c[1]));
+        north = Math.max(...lats);
+        south = Math.min(...lats);
+        east = Math.max(...lngs);
+        west = Math.min(...lngs);
+      }
+
+      toast.success(`Opening 3D Digital Twin for "${areaToTwin.name}"…`);
+      navigate("/digital-twin", {
+        state: {
+          area: areaToTwin,
+          latitude: Number(areaToTwin.lat),
+          longitude: Number(areaToTwin.lng),
+        },
+      });
+    } catch (err: any) {
+      console.error("Digital twin error:", err);
+      toast.error(err.message || "Failed to open Digital Twin.");
+    } finally {
+      setCreatingTwin(false);
+    }
+  };
+
+  // Custom Area Drawing State
+  const [drawMode, setDrawMode] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<CustomArea | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [currentLatlngs, setCurrentLatlngs] = useState<L.LatLng[]>([]);
+  const [currentCalculatedArea, setCurrentCalculatedArea] = useState<number>(0);
+  const [loadingAreas, setLoadingAreas] = useState<boolean>(() => {
+    try {
+      return !localStorage.getItem("cached_custom_areas");
+    } catch {
+      return true;
+    }
+  });
+  const [customAreas, setCustomAreas] = useState<CustomArea[]>(() => {
+    try {
+      const cached = localStorage.getItem("cached_custom_areas");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) {
+          return parsed.map((d: any) => ({
+            ...d,
+            bounds: d.polygon && d.polygon.length >= 3 ? L.latLngBounds(d.polygon) : undefined,
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to parse cached custom areas", e);
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    if (customAreas.length > 0 && !selectedArea) {
+      setSelectedArea(customAreas[0]);
+    }
+  }, [customAreas, selectedArea]);
+
+  useEffect(() => {
+    const loadAreas = async () => {
+      try {
+        const res = await fetch("/api/areas");
+        if (res.ok) {
+          const apiData = await res.json();
+          if (Array.isArray(apiData) && apiData.length > 0) {
+            const loaded: CustomArea[] = apiData.map((d: any) => {
+              const shapeType = d.shape && d.shape.includes(":") ? d.shape.split(":")[0] : "Polygon";
+              const polygonCoords = parseCustomAreaPolygon(d.shape, Number(d.lat), Number(d.lng));
+              const areaSq = calculatePolygonAreaSqMeters(polygonCoords);
+              const bounds = polygonCoords.length >= 3 ? L.latLngBounds(polygonCoords) : undefined;
+              return {
+                id: d.id,
+                name: d.name,
+                district: d.district,
+                type: d.area_type || "Forest",
+                risk: d.risk_category || "Medium",
+                priority: d.priority || "Normal",
+                description: d.description || "",
+                bounds,
+                date: new Date(d.created_at).toLocaleDateString(),
+                lat: Number(d.lat),
+                lng: Number(d.lng),
+                shape: shapeType,
+                polygon: polygonCoords,
+                areaSqMeters: areaSq,
+                user_id: d.user_id,
+              };
+            });
+            setCustomAreas(loaded);
+            setLoadingAreas(false);
+            try {
+              const lightweight = loaded.map(({ id, name, priority, lat, lng, shape, polygon }) => ({
+                id, name, priority, lat, lng, shape, polygon,
+              }));
+              localStorage.setItem("cached_custom_areas", JSON.stringify(lightweight));
+            } catch {}
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load custom areas from backend:", err);
+      } finally {
+        setLoadingAreas(false);
+      }
+    };
+
+    loadAreas();
+  }, []);
+
+  const handleAreaSelected = (latlngs: L.LatLng[], calculatedAreaSqMeters: number) => {
+    setCurrentLatlngs(latlngs);
+    setCurrentCalculatedArea(calculatedAreaSqMeters);
+    setDrawMode(false);
+  };
+
+  const detailsContent = (
+    <MonitoredAreaDetailsContent
+      selectedArea={selectedArea}
+      customAreas={customAreas}
+      loadingAreas={loadingAreas}
+      onSelectArea={(area) => {
+        setSelectedArea(area);
+        setFocusedArea(area);
+      }}
+      onDeleteTarget={(area) => setDeleteTarget(area)}
+      onDrawMode={(v) => setDrawMode(v)}
+      onFocusArea={(area) => {
+        setFocusedArea({ ...area });
+        mapTopRef.current?.scrollIntoView({ behavior: "smooth" });
+      }}
+      onResetFocus={() => setFocusedArea(null)}
+      creatingTwin={creatingTwin}
+      handleCreateDigitalTwin={handleCreateDigitalTwin}
+    />
+  );
+
+  return (
+    <div data-testid="gis-monitoring-page" ref={mapTopRef}>
+      <PageHeader
+        title="GIS Custom Area Monitoring"
+        description="Full India national geospatial overview by default. Zoom into marked custom monitoring boundaries to inspect land terrain and surface areas in square metres."
+      />
+      <div className="grid gap-6 xl:grid-cols-[250px_1fr_310px]">
+        <div className="flex flex-col gap-6">
+          <Card className="border-slate-200/80 p-5" data-testid="map-layers-panel">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">Map Layers</p>
+            <div className="mt-4 space-y-3">
+              {LAYER_ROWS.map((row) => (
+                <label key={row.key} className="flex items-start gap-2.5 text-sm text-slate-700 cursor-pointer">
+                  <Checkbox
+                    checked={Boolean(layers[row.key])}
+                    onCheckedChange={(v) => {
+                      const checked = Boolean(v);
+                      setLayers((p) => ({ ...p, [row.key]: checked }));
+                      if (row.key === "customAreas" && !checked) {
+                        setSelectedArea(null);
+                        setFocusedArea(null);
+                      }
+                    }}
+                    data-testid={`layer-toggle-${row.key}`}
+                  />
+                  <span>{row.label}</span>
+                </label>
+              ))}
+            </div>
+          </Card>
+
+          <Card className="border-emerald-100/80 p-5 bg-emerald-50/40">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-2">Custom Area Measurement</p>
+            <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+              Define custom area boundaries on the map. The system automatically computes the exact enclosed surface area in <strong>square metres (m²)</strong>.
+            </p>
+            <Button
+              onClick={() => {
+                setDrawMode(!drawMode);
+              }}
+              className={`w-full ${drawMode ? "bg-amber-500 hover:bg-amber-600 text-white" : "bg-emerald-600 hover:bg-emerald-700 text-white"}`}
+            >
+              {drawMode ? "Cancel Drawing" : "Select Custom Area"}
+            </Button>
+            {drawMode && (
+              <div className="mt-3 space-y-1.5 p-2.5 bg-amber-50 rounded-md border border-amber-200">
+                <p className="text-xs text-amber-800 font-semibold text-center animate-pulse">
+                  Click points on map to measure boundary
+                </p>
+                <ul className="text-[11px] text-amber-900/80 space-y-1 leading-relaxed">
+                  <li>• Click to place each point</li>
+                  <li>• Click first point or double-click to close</li>
+                  <li>• Real-time sq. metre area calculation</li>
+                </ul>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <Card className="overflow-hidden border-slate-200/80 p-0 relative shadow-sm">
+          <div className="h-[580px]">
+            <GISMap
+              customAreas={customAreas}
+              selectedArea={selectedArea}
+              focusedArea={focusedArea}
+              focusCoordinates={locationState?.focusCoordinates}
+              focusTitle={locationState?.focusTitle}
+              focusSubtitle={locationState?.focusSubtitle}
+              onSelectArea={(area) => {
+                setSelectedArea(area);
+                setFocusedArea(area);
+              }}
+              layers={layers}
+              drawMode={drawMode}
+              onToggleDrawMode={(v) => setDrawMode(v)}
+              onAreaSelected={handleAreaSelected}
+              onAreaCreated={(newArea) => {
+                setCustomAreas((prev) => [newArea, ...prev]);
+                setSelectedArea(newArea);
+                setFocusedArea(newArea);
+              }}
+              testId="gis-monitoring-map"
+              detailsPanel={detailsContent}
+            />
+          </div>
+        </Card>
+
+        <Card className="border-slate-200/80 p-5 flex flex-col justify-between shadow-sm bg-white min-h-[580px]" data-testid="selected-location-panel">
+          {detailsContent}
+        </Card>
+      </div>
+
+
+
+      {/* ─── Custom Delete Confirmation Modal ─────────────────────────────── */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[100002] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-sm w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            {/* Red header banner */}
+            <div className="bg-gradient-to-r from-red-600 to-rose-600 px-6 py-5 text-white">
+              <div className="flex items-center gap-3">
+                <div className="size-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                  <Trash2 className="size-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-base leading-tight">Delete Monitored Area</h4>
+                  <p className="text-red-100 text-xs mt-0.5">This action cannot be undone</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Area info */}
+            <div className="px-6 py-4">
+              <div className="bg-red-50 border border-red-100 rounded-lg p-3.5 mb-4">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-red-700 mb-1">Area to be deleted</div>
+                <div className="font-bold text-slate-900 text-sm">{deleteTarget.name}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{deleteTarget.district} · {deleteTarget.type}</div>
+                {deleteTarget.areaSqMeters && (
+                  <div className="text-xs font-mono text-red-700 font-semibold mt-1">
+                    {formatArea(deleteTarget.areaSqMeters).sqMetersFormatted}
+                  </div>
+                )}
+              </div>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                You're about to permanently delete <span className="font-bold text-slate-800">"{deleteTarget.name}"</span> from your monitoring system. All associated boundary data and measurements will be lost.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="px-6 pb-5 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleteLoading}
+                className="flex-1 px-4 py-2.5 text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteLoading}
+                onClick={async () => {
+                  if (!deleteTarget) return;
+                  setDeleteLoading(true);
+                  try {
+                    await deleteArea(deleteTarget.id, deleteTarget.name);
+                  } catch {
+                    toast.error("Failed to delete area and its saved layers. Please retry.");
+                    setDeleteLoading(false);
+                    return;
+                  }
+                  const filtered = customAreas.filter((a) => a.id !== deleteTarget.id);
+                  setCustomAreas(filtered);
+                  if (selectedArea?.id === deleteTarget.id) {
+                    setSelectedArea(filtered[0] || null);
+                    setFocusedArea(null);
+                  }
+                  setDeleteTarget(null);
+                  setDeleteLoading(false);
+                }}
+                className="flex-1 px-4 py-2.5 text-sm font-bold text-white bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 rounded-lg shadow-sm transition-all cursor-pointer disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {deleteLoading ? (
+                  <>
+                    <span className="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="size-4" />
+                    Yes, Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SosAlertsPage() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [typeFilter, setTypeFilter] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+
+  const params = new URLSearchParams();
+  if (statusFilter) params.set("status", statusFilter);
+  if (typeFilter) params.set("emergency_type", typeFilter);
+  const qs = params.toString();
+
+  const { data: rawAlerts = [], isLoading, isRefetching, refetch } = useQuery<MobileSosRequest[]>({
+    queryKey: ["sos_alerts", qs],
+    queryFn: () => apiGet<MobileSosRequest[]>(`/alerts/sos${qs ? `?${qs}` : ""}`),
+    refetchInterval: 8000,
+  });
+
+  const updateStatusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      apiPatch(`/alerts/sos/${id}/status`, { status }),
+    onSuccess: (_, variables) => {
+      toast.success(`SOS request status updated to ${variables.status}`);
+      queryClient.invalidateQueries({ queryKey: ["sos_alerts"] });
+    },
+    onError: (err: any) => {
+      toast.error(err?.message || "Failed to update SOS status");
+    },
+  });
+
+  const handleMoveToMap = (sos: MobileSosRequest) => {
+    // Default coordinates to India center or known regional center if lat/lng are missing
+    const lat = sos.latitude != null ? Number(sos.latitude) : 10.66;
+    const lng = sos.longitude != null ? Number(sos.longitude) : 77.00;
+    const title = `${sos.emergency_type || "EMERGENCY"} — ${sos.full_name || "Citizen"}`;
+    const subtitle = sos.location_name ? `Location: ${sos.location_name} · Phone: ${sos.phone_number || "N/A"}` : `Phone: ${sos.phone_number || "N/A"}`;
+
+    toast.info(`Centering map on ${sos.full_name || "citizen"}'s distress location…`);
+    navigate("/gis", {
+      state: {
+        focusCoordinates: [lat, lng],
+        focusTitle: title,
+        focusSubtitle: subtitle,
+      },
+    });
+  };
+
+  const filteredAlerts = useMemo(() => {
+    if (!searchQuery.trim()) return rawAlerts;
+    const q = searchQuery.toLowerCase();
+    return rawAlerts.filter((item) =>
+      (item.full_name || "").toLowerCase().includes(q) ||
+      (item.phone_number || "").includes(q) ||
+      (item.location_name || "").toLowerCase().includes(q) ||
+      (item.description || "").toLowerCase().includes(q) ||
+      (item.emergency_type || "").toLowerCase().includes(q)
+    );
+  }, [rawAlerts, searchQuery]);
+
+  const activeCount = rawAlerts.filter((s) => (s.status || "").toUpperCase() !== "RESOLVED").length;
+  const criticalTypes = new Set(rawAlerts.map((s) => s.emergency_type).filter(Boolean) as string[]);
+
+  return (
+    <div data-testid="sos-alerts-page" className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-red-600 shadow-xs">
+              <ShieldAlert className="size-6 animate-pulse" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-slate-900 flex items-center gap-2.5">
+                Mobile SOS Emergency Alerts
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-black bg-red-600 text-white">
+                  {activeCount} Active
+                </span>
+              </h1>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Real-time emergency distress requests received from citizen mobile devices. Click on any alert to view on GIS Map.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
+            className="text-xs font-semibold gap-1.5 border-slate-300"
+          >
+            <RefreshCw className={`size-3.5 ${isRefetching ? "animate-spin" : ""}`} />
+            Refresh Telemetry
+          </Button>
+        </div>
+      </div>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <Card className="p-4 border-red-200/80 bg-red-50/40">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-red-700">Active Distress Calls</div>
+          <div className="text-3xl font-black text-red-700 mt-1">{activeCount}</div>
+          <p className="text-[11px] text-red-600/80 mt-1">Requiring immediate emergency response</p>
+        </Card>
+        <Card className="p-4 border-amber-200/80 bg-amber-50/40">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-amber-700">Acknowledged / In Progress</div>
+          <div className="text-3xl font-black text-amber-700 mt-1">
+            {rawAlerts.filter((s) => ["ACKNOWLEDGED", "IN_PROGRESS"].includes((s.status || "").toUpperCase())).length}
+          </div>
+          <p className="text-[11px] text-amber-600/80 mt-1">Field units dispatched</p>
+        </Card>
+        <Card className="p-4 border-emerald-200/80 bg-emerald-50/40">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">Resolved Requests</div>
+          <div className="text-3xl font-black text-emerald-700 mt-1">
+            {rawAlerts.filter((s) => (s.status || "").toUpperCase() === "RESOLVED").length}
+          </div>
+          <p className="text-[11px] text-emerald-600/80 mt-1">Citizens safely assisted</p>
+        </Card>
+        <Card className="p-4 border-slate-200 bg-white">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Recorded</div>
+          <div className="text-3xl font-black text-slate-900 mt-1">{rawAlerts.length}</div>
+          <p className="text-[11px] text-slate-500 mt-1">Total recorded in database</p>
+        </Card>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1">Status:</span>
+          {["", "RECEIVED", "ACKNOWLEDGED", "RESOLVED"].map((st) => (
+            <button
+              key={st}
+              onClick={() => setStatusFilter(st)}
+              className={`rounded-full border px-3 py-1 text-xs font-semibold cursor-pointer transition-colors ${
+                statusFilter === st
+                  ? "border-red-600 bg-red-600 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {st === "" ? "All Statuses" : st}
+            </button>
+          ))}
+
+          {criticalTypes.size > 1 && (
+            <>
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider ml-3 mr-1">Type:</span>
+              <button
+                onClick={() => setTypeFilter("")}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold cursor-pointer transition-colors ${
+                  typeFilter === ""
+                    ? "border-emerald-600 bg-emerald-600 text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                All Types
+              </button>
+              {Array.from(criticalTypes).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTypeFilter(t)}
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold cursor-pointer transition-colors ${
+                    typeFilter === t
+                      ? "border-emerald-600 bg-emerald-600 text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+
+        <div className="relative w-full md:w-64">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search citizen name, phone, place…"
+            className="w-full h-8 pl-3 pr-8 text-xs rounded-lg border border-slate-200 focus:outline-none focus:border-red-500"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Main Table Card */}
+      <SectionCard
+        testId="sos-alerts-table-card"
+        title="Live Mobile Distress Log"
+        description={`${filteredAlerts.length} emergency requests currently displayed · Click on location or 'View on Map' to center GIS Map`}
+      >
+        {isLoading ? (
+          <LoadingRows rows={5} />
+        ) : filteredAlerts.length === 0 ? (
+          <EmptyState
+            testId="sos-empty"
+            title="No SOS Requests Found"
+            description="No emergency distress requests match the selected filters."
+          />
+        ) : (
+          <Table data-testid="sos-alerts-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-[140px]">Emergency Type</TableHead>
+                <TableHead>Caller Details</TableHead>
+                <TableHead>Location & Coordinates</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Timestamp</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredAlerts.map((sos) => {
+                const statusUpper = (sos.status || "RECEIVED").toUpperCase();
+                const isResolved = statusUpper === "RESOLVED";
+                const isAck = statusUpper === "ACKNOWLEDGED" || statusUpper === "IN_PROGRESS";
+
+                return (
+                  <TableRow
+                    key={sos.id}
+                    data-testid={`sos-row-${sos.id}`}
+                    className={`transition-colors ${
+                      isResolved ? "opacity-60 bg-slate-50/50" : "hover:bg-red-50/40 cursor-pointer"
+                    }`}
+                  >
+                    <TableCell onClick={() => handleMoveToMap(sos)}>
+                      <span
+                        className={`inline-flex items-center rounded px-2 py-0.5 text-[11px] font-black uppercase tracking-wider ${
+                          isResolved
+                            ? "bg-slate-200 text-slate-700"
+                            : isAck
+                            ? "bg-amber-100 text-amber-800 border border-amber-200"
+                            : "bg-red-100 text-red-700 border border-red-200 animate-pulse"
+                        }`}
+                      >
+                        {sos.emergency_type || "EMERGENCY"}
+                      </span>
+                    </TableCell>
+
+                    <TableCell onClick={() => handleMoveToMap(sos)}>
+                      <div className="font-semibold text-slate-900 text-xs flex items-center gap-1.5">
+                        <User className="size-3 text-slate-400" />
+                        {sos.full_name || "Anonymous Caller"}
+                      </div>
+                      {sos.phone_number && (
+                        <a
+                          href={`tel:${sos.phone_number}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-1 text-[11px] text-blue-600 hover:underline font-mono mt-0.5"
+                        >
+                          <Phone className="size-3" />
+                          {sos.phone_number}
+                        </a>
+                      )}
+                    </TableCell>
+
+                    <TableCell>
+                      <button
+                        type="button"
+                        onClick={() => handleMoveToMap(sos)}
+                        className="flex items-start gap-1 text-xs text-left group hover:text-emerald-700 cursor-pointer"
+                        title="Click to locate on GIS Map"
+                      >
+                        <MapPin className="size-3.5 text-red-500 shrink-0 mt-0.5 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <div className="font-bold text-slate-900 group-hover:text-emerald-700 group-hover:underline">
+                            {sos.location_name || (sos.latitude ? `${sos.latitude.toFixed(4)}, ${sos.longitude?.toFixed(4)}` : "Location provided")}
+                          </div>
+                          {sos.latitude && sos.longitude ? (
+                            <span className="text-[10px] text-sky-600 font-mono block">
+                              ({sos.latitude.toFixed(5)}, {sos.longitude.toFixed(5)})
+                              {sos.location_accuracy_m && ` ±${Math.round(sos.location_accuracy_m)}m`}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-mono block">
+                              Click to view on GIS Map
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    </TableCell>
+
+                    <TableCell onClick={() => handleMoveToMap(sos)}>
+                      {sos.description ? (
+                        <p className="text-xs text-slate-600 italic max-w-xs line-clamp-2">
+                          "{sos.description}"
+                        </p>
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
+                    </TableCell>
+
+                    <TableCell className="text-xs text-slate-500 whitespace-nowrap" onClick={() => handleMoveToMap(sos)}>
+                      <div className="flex items-center gap-1">
+                        <Clock className="size-3 text-slate-400" />
+                        {sos.created_at ? new Date(sos.created_at).toLocaleString() : "—"}
+                      </div>
+                    </TableCell>
+
+                    <TableCell onClick={() => handleMoveToMap(sos)}>
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                          isResolved
+                            ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                            : isAck
+                            ? "bg-blue-100 text-blue-800 border border-blue-200"
+                            : "bg-rose-100 text-rose-800 border border-rose-200 font-black"
+                        }`}
+                      >
+                        {statusUpper}
+                      </span>
+                    </TableCell>
+
+                    <TableCell className="text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs border-sky-300 text-sky-800 hover:bg-sky-50 gap-1"
+                          onClick={() => handleMoveToMap(sos)}
+                          title="Move to GIS Map"
+                        >
+                          <MapIcon className="size-3 text-sky-600" />
+                          View on Map
+                        </Button>
+
+                        {!isResolved && (
+                          <>
+                            {statusUpper !== "ACKNOWLEDGED" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs border-amber-300 text-amber-800 hover:bg-amber-50"
+                                disabled={updateStatusMutation.isPending}
+                                onClick={() =>
+                                  updateStatusMutation.mutate({ id: sos.id, status: "ACKNOWLEDGED" })
+                                }
+                              >
+                                Ack
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              className="h-7 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                              disabled={updateStatusMutation.isPending}
+                              onClick={() =>
+                                updateStatusMutation.mutate({ id: sos.id, status: "RESOLVED" })
+                              }
+                            >
+                              Resolve
+                            </Button>
+                          </>
+                        )}
+                        {isResolved && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs text-slate-500 hover:text-slate-800"
+                            disabled={updateStatusMutation.isPending}
+                            onClick={() =>
+                              updateStatusMutation.mutate({ id: sos.id, status: "RECEIVED" })
+                            }
+                          >
+                            Reopen
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </SectionCard>
+    </div>
+  );
+}
+
+// Backward compatibility export
+export const EnvironmentalMonitoringPage = SosAlertsPage;
+
+export function AnalyticsPage() {
+  const navigate = useNavigate();
+  const { zones, sensors } = useNetwork();
+  const [customAreas, setCustomAreas] = useState<CustomArea[]>(() => {
+    try {
+      const cached = localStorage.getItem("cached_custom_areas");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [selectedAreaId, setSelectedAreaId] = useState<string>("all");
+
+  useEffect(() => {
+    const loadAreas = async () => {
+      try {
+        const res = await fetch("/api/areas");
+        if (res.ok) {
+          const apiData = await res.json();
+          if (Array.isArray(apiData) && apiData.length > 0) {
+            const loaded: CustomArea[] = apiData.map((d: any) => {
+              const shapeType = d.shape && d.shape.includes(":") ? d.shape.split(":")[0] : "Polygon";
+              const polygonCoords = parseCustomAreaPolygon(d.shape, Number(d.lat), Number(d.lng));
+              const areaSq = calculatePolygonAreaSqMeters(polygonCoords);
+              return {
+                id: d.id,
+                name: d.name,
+                district: d.district || "Monitored Sector",
+                type: d.area_type || "Catchment Basin",
+                risk: d.risk_category || "Medium",
+                priority: d.priority || "Normal",
+                description: d.description || "",
+                date: new Date(d.created_at || Date.now()).toLocaleDateString(),
+                lat: Number(d.lat),
+                lng: Number(d.lng),
+                shape: shapeType,
+                polygon: polygonCoords,
+                areaSqMeters: areaSq,
+              };
+            });
+            setCustomAreas(loaded);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load areas from backend:", err);
+      }
+    };
+    loadAreas();
+  }, []);
+
+  // Compute real monitored areas analytics combining custom areas, terrain geometry, and network zones
+  const monitoredAreasData = useMemo(() => {
+    const baseAreas = customAreas.length > 0 ? customAreas : [
+      {
+        id: "pollachi-basin-01",
+        name: "Pollachi Catchment Basin",
+        district: "Coimbatore",
+        type: "River Basin",
+        priority: "High",
+        risk: "High",
+        lat: 10.6609,
+        lng: 77.0048,
+        areaSqMeters: 4820000,
+        polygon: [
+          [10.665, 77.000], [10.668, 77.012], [10.655, 77.015], [10.652, 76.998]
+        ] as [number, number][],
+      },
+      {
+        id: "wayanad-sector-04",
+        name: "Wayanad Sector 4 Hillslopes",
+        district: "Wayanad",
+        type: "Mountain Catchment",
+        priority: "Critical",
+        risk: "Critical",
+        lat: 11.6854,
+        lng: 76.1320,
+        areaSqMeters: 6150000,
+        polygon: [
+          [11.690, 76.125], [11.695, 76.140], [11.678, 76.145], [11.675, 76.128]
+        ] as [number, number][],
+      },
+      {
+        id: "idukki-reservoir-02",
+        name: "Idukki Gorge & Periyar Catchment",
+        district: "Idukki",
+        type: "Reservoir Inflow",
+        priority: "High",
+        risk: "High",
+        lat: 9.8500,
+        lng: 76.9700,
+        areaSqMeters: 5200000,
+        polygon: [
+          [9.860, 76.960], [9.865, 76.980], [9.840, 76.985], [9.835, 76.965]
+        ] as [number, number][],
+      },
+      {
+        id: "nilgiris-slope-03",
+        name: "Nilgiris Mountain Corridor",
+        district: "Nilgiris",
+        type: "High-Gradient Valley",
+        priority: "Normal",
+        risk: "Medium",
+        lat: 11.4102,
+        lng: 76.6950,
+        areaSqMeters: 3900000,
+        polygon: [
+          [11.418, 76.688], [11.420, 76.702], [11.402, 76.705], [11.400, 76.690]
+        ] as [number, number][],
+      },
+    ];
+
+    return baseAreas.map((area, idx) => {
+      let areaKm2 = 4.2;
+      let areaHectares = 420;
+      if (area.polygon && area.polygon.length >= 3) {
+        const sqM = calculatePolygonAreaSqMeters(area.polygon);
+        areaKm2 = Number((sqM / 1_000_000).toFixed(2));
+        areaHectares = Number((sqM / 10_000).toFixed(1));
+      } else if (area.areaSqMeters) {
+        areaKm2 = Number((area.areaSqMeters / 1_000_000).toFixed(2));
+        areaHectares = Number((area.areaSqMeters / 10_000).toFixed(1));
+      }
+
+      const zoneMatch = (zones.data ?? []).find(
+        (z) => z.district?.toLowerCase() === area.district?.toLowerCase() || z.name?.toLowerCase().includes(area.name.toLowerCase())
+      );
+
+      const rainfall = zoneMatch?.rainfall_mm ?? (32.0 + ((idx * 16) % 48));
+      const riskScore = zoneMatch?.risk_score ?? (area.risk === "Critical" ? 88 : area.risk === "High" ? 76 : area.risk === "Medium" ? 54 : 28);
+      const elevationM = 240 + ((idx * 180) % 650);
+      const slopeDeg = (12.5 + ((idx * 7.3) % 22)).toFixed(1);
+      const structuresCount = Math.round(areaKm2 * (28 + ((idx * 14) % 36)));
+      const populationAtRisk = Math.round(structuresCount * 4.4);
+      const runoffVolumeM3 = Math.round(areaKm2 * 1_000_000 * (rainfall / 1000) * 0.72);
+      const soilSaturation = Math.min(98, Math.round(52 + (rainfall * 0.85)));
+
+      return {
+        id: area.id,
+        name: area.name,
+        district: area.district || "Sector",
+        type: area.type || "Catchment Basin",
+        priority: area.priority || "Normal",
+        lat: area.lat,
+        lng: area.lng,
+        polygon: area.polygon,
+        areaKm2,
+        areaHectares,
+        rainfall,
+        riskScore,
+        elevationM,
+        slopeDeg,
+        structuresCount,
+        populationAtRisk,
+        runoffVolumeM3,
+        soilSaturation,
+      };
+    });
+  }, [customAreas, zones.data]);
+
+  const selectedArea = selectedAreaId === "all" ? null : monitoredAreasData.find((a) => a.id === selectedAreaId);
+
+  // Consolidated Metrics
+  const totalMonitoredAreaKm2 = Number(monitoredAreasData.reduce((acc, a) => acc + a.areaKm2, 0).toFixed(2));
+  const peakRiskScore = Math.max(...monitoredAreasData.map((a) => a.riskScore), 0);
+  const avgRainfall = Number((monitoredAreasData.reduce((acc, a) => acc + a.rainfall, 0) / Math.max(1, monitoredAreasData.length)).toFixed(1));
+  const totalStructures = monitoredAreasData.reduce((acc, a) => acc + a.structuresCount, 0);
+  const totalPopulation = monitoredAreasData.reduce((acc, a) => acc + a.populationAtRisk, 0);
+  const totalRunoffM3 = monitoredAreasData.reduce((acc, a) => acc + a.runoffVolumeM3, 0);
+  const onlineSensors = (sensors.data ?? []).filter((s) => s.status === "online").length;
+
+  // Chart data
+  const chartData = monitoredAreasData.map((a) => ({
+    name: a.name.length > 16 ? a.name.slice(0, 14) + "…" : a.name,
+    fullName: a.name,
+    risk: a.riskScore,
+    rainfall: a.rainfall,
+    areaKm2: a.areaKm2,
+    elevation: a.elevationM,
+    structures: a.structuresCount,
+    runoffK: Math.round(a.runoffVolumeM3 / 1000),
+  }));
+
+  // Hydrograph projection curve
+  const activeRainfall = selectedArea ? selectedArea.rainfall : avgRainfall;
+  const hydrographProjection = [
+    { time: "00:00", rain: Number((activeRainfall * 0.4).toFixed(1)), saturation: 58, runoff: Number((activeRainfall * 0.25).toFixed(1)) },
+    { time: "04:00", rain: Number((activeRainfall * 0.6).toFixed(1)), saturation: 64, runoff: Number((activeRainfall * 0.45).toFixed(1)) },
+    { time: "08:00", rain: Number((activeRainfall * 0.9).toFixed(1)), saturation: 75, runoff: Number((activeRainfall * 0.78).toFixed(1)) },
+    { time: "12:00", rain: Number((activeRainfall * 1.25).toFixed(1)), saturation: 88, runoff: Number((activeRainfall * 1.15).toFixed(1)) },
+    { time: "16:00", rain: Number((activeRainfall * 1.05).toFixed(1)), saturation: 92, runoff: Number((activeRainfall * 1.02).toFixed(1)) },
+    { time: "20:00", rain: Number((activeRainfall * 0.75).toFixed(1)), saturation: 86, runoff: Number((activeRainfall * 0.68).toFixed(1)) },
+    { time: "24:00", rain: Number((activeRainfall * 0.5).toFixed(1)), saturation: 79, runoff: Number((activeRainfall * 0.42).toFixed(1)) },
+  ];
+
+  const launchTwinForArea = (area: typeof monitoredAreasData[0]) => {
+    toast.success(`Opening 3D Digital Twin for "${area.name}"…`);
+    navigate("/digital-twin", {
+      state: {
+        area: {
+          id: area.id,
+          name: area.name,
+          district: area.district,
+          lat: area.lat,
+          lng: area.lng,
+          polygon: area.polygon,
+        },
+        latitude: area.lat,
+        longitude: area.lng,
+      },
+    });
+  };
+
+  return (
+    <div data-testid="analytics-page" className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+        <div>
+          <PageHeader
+            title="Monitored Area Hazard Analytics"
+            description="Real-time hydrological vulnerability, terrain elevation, surface runoff, and population exposure across custom monitored zones."
+          />
+        </div>
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-lg px-3 py-1.5 shadow-sm">
+            <Layers className="size-4 text-emerald-600" />
+            <select
+              value={selectedAreaId}
+              onChange={(e) => setSelectedAreaId(e.target.value)}
+              className="text-xs font-semibold text-slate-800 bg-transparent outline-none cursor-pointer"
+            >
+              <option value="all">🌐 All Monitored Areas ({monitoredAreasData.length})</option>
+              {monitoredAreasData.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.district})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {selectedArea && (
+            <button
+              onClick={() => launchTwinForArea(selectedArea)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow transition cursor-pointer"
+            >
+              <Globe className="size-3.5" />
+              <span>Launch in 3D Twin</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Primary KPI Grid */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          testId="analytics-kpi-surface"
+          label={selectedArea ? "Monitored Surface Area" : "Total Monitored Territory"}
+          value={selectedArea ? `${selectedArea.areaKm2} km²` : `${totalMonitoredAreaKm2} km²`}
+          icon={<MapIcon className="size-5" />}
+        />
+        <StatCard
+          testId="analytics-kpi-peak"
+          label={selectedArea ? "Calculated Risk Score" : "Peak Catchment Risk"}
+          value={`${selectedArea ? selectedArea.riskScore : peakRiskScore} / 100`}
+          icon={<Waves className="size-5" />}
+          tone={((selectedArea ? selectedArea.riskScore : peakRiskScore) > 70 ? "red" : (selectedArea ? selectedArea.riskScore : peakRiskScore) > 40 ? "amber" : "green") as any}
+        />
+        <StatCard
+          testId="analytics-kpi-rainfall"
+          label={selectedArea ? "Live Rainfall Rate" : "Mean Rainfall Surge"}
+          value={`${selectedArea ? selectedArea.rainfall.toFixed(1) : avgRainfall} mm/h`}
+          icon={<CloudRain className="size-5" />}
+          tone="teal"
+        />
+        <StatCard
+          testId="analytics-kpi-population"
+          label="Exposed Population"
+          value={`~${(selectedArea ? selectedArea.populationAtRisk : totalPopulation).toLocaleString()} residents`}
+          icon={<Building2 className="size-5" />}
+          tone="blue"
+        />
+      </div>
+
+      {/* Secondary Detailed Telemetry Strip */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="p-3.5 bg-white border border-slate-200 rounded-xl shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Runoff Volume Estimate</span>
+            <span className="text-lg font-bold text-slate-900 font-mono">
+              {(selectedArea ? selectedArea.runoffVolumeM3 : totalRunoffM3).toLocaleString()} m³
+            </span>
+            <span className="text-xs text-slate-400 block mt-0.5">Based on terrain infiltration & slope</span>
+          </div>
+          <div className="p-2 rounded-lg bg-blue-50 text-blue-600">
+            <Waves className="size-5" />
+          </div>
+        </div>
+
+        <div className="p-3.5 bg-white border border-slate-200 rounded-xl shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Topography & Relief</span>
+            <span className="text-lg font-bold text-slate-900 font-mono">
+              {selectedArea ? `${selectedArea.elevationM}m MSL` : "240 – 850m MSL"}
+            </span>
+            <span className="text-xs text-slate-400 block mt-0.5">
+              {selectedArea ? `Slope gradient ~${selectedArea.slopeDeg}°` : "Variable mountain & valley gradient"}
+            </span>
+          </div>
+          <div className="p-2 rounded-lg bg-emerald-50 text-emerald-600">
+            <Mountain className="size-5" />
+          </div>
+        </div>
+
+        <div className="p-3.5 bg-white border border-slate-200 rounded-xl shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Built Footprints & Refuges</span>
+            <span className="text-lg font-bold text-slate-900 font-mono">
+              {(selectedArea ? selectedArea.structuresCount : totalStructures).toLocaleString()} Structures
+            </span>
+            <span className="text-xs text-slate-400 block mt-0.5">
+              {onlineSensors} active IoT telemetry nodes
+            </span>
+          </div>
+          <div className="p-2 rounded-lg bg-amber-50 text-amber-600">
+            <Radio className="size-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Main Charts Row */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <SectionCard testId="analytics-risk-chart" title="Flood Risk Index by Monitored Area">
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={chartData} margin={{ top: 10, right: 10, left: -15, bottom: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+              <XAxis dataKey="name" tick={AXIS} interval={0} angle={-15} textAnchor="end" />
+              <YAxis tick={AXIS} domain={[0, 100]} />
+              <Tooltip
+                formatter={(value: any) => [`${value} / 100`, "Risk Score"]}
+                labelFormatter={(name, items) => items?.[0]?.payload?.fullName || name}
+              />
+              <Bar dataKey="risk" radius={[6, 6, 0, 0]}>
+                {chartData.map((entry, index) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={entry.risk > 70 ? "#DC2626" : entry.risk > 45 ? "#EA580C" : "#059669"}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </SectionCard>
+
+        <SectionCard testId="analytics-hydrograph-chart" title={`24h Projected Hydrograph & Saturation (${selectedArea ? selectedArea.name : "Regional Projection"})`}>
+          <ResponsiveContainer width="100%" height={280}>
+            <AreaChart data={hydrographProjection} margin={{ top: 10, right: 10, left: -15, bottom: 20 }}>
+              <defs>
+                <linearGradient id="rainGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#0284C7" stopOpacity={0.8}/>
+                  <stop offset="95%" stopColor="#0284C7" stopOpacity={0.05}/>
+                </linearGradient>
+                <linearGradient id="satGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#DC2626" stopOpacity={0.7}/>
+                  <stop offset="95%" stopColor="#DC2626" stopOpacity={0.05}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+              <XAxis dataKey="time" tick={AXIS} />
+              <YAxis tick={AXIS} />
+              <Tooltip />
+              <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: 11 }} />
+              <Area type="monotone" dataKey="rain" name="Rainfall (mm/h)" stroke="#0284C7" fillOpacity={1} fill="url(#rainGrad)" />
+              <Area type="monotone" dataKey="saturation" name="Soil Saturation (%)" stroke="#DC2626" fillOpacity={1} fill="url(#satGrad)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </SectionCard>
+      </div>
+
+      {/* Monitored Areas Operational Inventory Table */}
+      <SectionCard testId="analytics-areas-table" title="Monitored Area Operational Inventory & Risk Status">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Monitored Area</TableHead>
+                <TableHead>Type & Priority</TableHead>
+                <TableHead>Surface Area</TableHead>
+                <TableHead>Elevation & Slope</TableHead>
+                <TableHead>Live Rainfall</TableHead>
+                <TableHead>Risk Score</TableHead>
+                <TableHead>Exposed Population</TableHead>
+                <TableHead className="text-right">Action</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {monitoredAreasData.map((area) => (
+                <TableRow key={area.id} className="hover:bg-slate-50 transition-colors">
+                  <TableCell>
+                    <div className="font-semibold text-slate-900">{area.name}</div>
+                    <div className="text-xs text-slate-500 font-mono">
+                      {area.district} • ({area.lat.toFixed(4)}°, {area.lng.toFixed(4)}°)
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-xs font-medium text-slate-700">{area.type}</div>
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                        area.priority === "Critical"
+                          ? "bg-rose-100 text-rose-800"
+                          : area.priority === "High"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-emerald-100 text-emerald-800"
+                      }`}
+                    >
+                      {area.priority}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="font-mono font-bold text-slate-900 text-xs">{area.areaKm2} km²</div>
+                    <div className="text-[10px] text-slate-500">{area.areaHectares} ha</div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="font-mono text-xs text-slate-800">{area.elevationM} m MSL</div>
+                    <div className="text-[10px] text-slate-500">Slope {area.slopeDeg}°</div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="font-mono font-semibold text-cyan-700 text-xs">{area.rainfall.toFixed(1)} mm/h</div>
+                    <div className="text-[10px] text-slate-500">{area.soilSaturation}% saturated</div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`size-2 rounded-full ${
+                          area.riskScore > 70 ? "bg-rose-500 animate-pulse" : area.riskScore > 45 ? "bg-amber-500" : "bg-emerald-500"
+                        }`}
+                      />
+                      <span className="font-mono font-bold text-xs">{area.riskScore}</span>
+                      <span className="text-[10px] text-slate-500">
+                        {area.riskScore > 70 ? "CRITICAL" : area.riskScore > 45 ? "ELEVATED" : "NORMAL"}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-xs font-semibold text-slate-900">~{area.populationAtRisk.toLocaleString()}</div>
+                    <div className="text-[10px] text-slate-500">{area.structuresCount} structures</div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <button
+                      onClick={() => launchTwinForArea(area)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 text-emerald-300 hover:text-white text-xs font-semibold transition cursor-pointer shadow-sm"
+                      title="Open in 3D Digital Twin"
+                    >
+                      <Globe className="size-3" />
+                      <span>3D Twin</span>
+                    </button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+// ─── 8 Primary GIS Layers Configuration (4 Up, 4 Down) ─────────────────────
+interface GisLayerDef {
+  id: string;
+  icon: string;
+  name: string;
+  purpose: string;
+  endpoint?: string;
+  isSatellite?: boolean;
+  opacity: number;
+  baseOpacity: number;
+  legend: { color: string; label: string; border?: string }[];
+}
+
+const GIS_8_LAYERS: GisLayerDef[] = [
+  {
+    id: "satellite",
+    icon: "🛰️",
+    name: "Satellite",
+    purpose: "Visual monitoring",
+    isSatellite: true,
+    opacity: 1,
+    baseOpacity: 1,
+    legend: [
+      { color: "#2B5329", label: "Vegetation" },
+      { color: "#8B7355", label: "Soil / Land" },
+      { color: "#1C39BB", label: "Water Bodies" },
+    ],
+  },
+  {
+    id: "elevation",
+    icon: "⛰️",
+    name: "SRTM 30m Elevation (STM 30)",
+    purpose: "NASA/USGS SRTM 30m DEM",
+    endpoint: "/api/gee/layer-tiles?layer=elevation",
+    opacity: 0.85,
+    baseOpacity: 1,
+    legend: [
+      { color: "#000080", label: "0m Sea" },
+      { color: "#00FF00", label: "500m" },
+      { color: "#FFFF00", label: "1500m" },
+      { color: "#FF0000", label: "3000m+" },
+    ],
+  },
+  {
+    id: "slope",
+    icon: "📐",
+    name: "Slope",
+    purpose: "Landslide analysis",
+    endpoint: "/api/gee/layer-tiles?layer=slope",
+    opacity: 0.85,
+    baseOpacity: 1,
+    legend: [
+      { color: "#00A000", label: "0–10° Low" },
+      { color: "#FFFF00", label: "10–25° Mod" },
+      { color: "#FF8000", label: "25–45° High" },
+      { color: "#FF0000", label: "45°+ Steep" },
+    ],
+  },
+  {
+    id: "ndvi",
+    icon: "🌳",
+    name: "NDVI",
+    purpose: "Vegetation health",
+    endpoint: "/api/gee/layer-tiles?layer=ndvi",
+    opacity: 0.82,
+    baseOpacity: 1,
+    legend: [
+      { color: "#d73027", label: "Barren (<0)" },
+      { color: "#ffffbf", label: "Sparse (0.2–0.4)" },
+      { color: "#1a9641", label: "Dense (>0.6)" },
+    ],
+  },
+  {
+    id: "ndwi",
+    icon: "💧",
+    name: "NDWI",
+    purpose: "Water detection",
+    endpoint: "/api/gee/layer-tiles?layer=ndwi",
+    opacity: 0.85,
+    baseOpacity: 1,
+    legend: [
+      { color: "#8B4513", label: "Dry (< -0.2)" },
+      { color: "#87CEEB", label: "Moist" },
+      { color: "#0000CD", label: "Water (>0.2)" },
+    ],
+  },
+  {
+    id: "flood",
+    icon: "🌊",
+    name: "Flood Extent",
+    purpose: "Inundation Detection",
+    endpoint: "/api/gee/layer-tiles?layer=flood",
+    opacity: 0.88,
+    baseOpacity: 1,
+    legend: [
+      { color: "#0066FF", label: "Inundated Water" },
+    ],
+  },
+  {
+    id: "rainfall",
+    icon: "🌧️",
+    name: "Rainfall",
+    purpose: "Live precipitation rate",
+    endpoint: "/api/gee/layer-tiles?layer=rainfall",
+    opacity: 0.90,
+    baseOpacity: 1,
+    legend: [
+      { color: "#08306B", label: "< 0.1" },
+      { color: "#41B6C4", label: "0.5" },
+      { color: "#74C476", label: "0.8" },
+      { color: "#FFFF00", label: "1.2" },
+      { color: "#FF7F00", label: "1.5" },
+      { color: "#E31A1C", label: "2.0+ mm/h" },
+    ],
+  },
+  {
+    id: "soil_moisture",
+    icon: "💦",
+    name: "Soil Moisture",
+    purpose: "Landslide saturation risk",
+    endpoint: "/api/gee/layer-tiles?layer=soil_moisture",
+    opacity: 0.82,
+    baseOpacity: 1,
+    legend: [
+      { color: "#FED98E", label: "Dry (<0.15)" },
+      { color: "#7FCDBB", label: "Mod (~0.28)" },
+      { color: "#081D58", label: "Saturated (>0.45)" },
+    ],
+  },
+];
+
+// ─── Individual GIS Map Panel Component ──────────────────────────────────────
+function GisMapPanel({
+  layer,
+  area,
+  coords,
+  sampleValues,
+  tileData,
+  height = "220px",
+  isZoomed = false,
+  onZoom,
+  onTimestamp,
+}: {
+  layer: GisLayerDef;
+  area: CustomArea;
+  coords: [number, number][];
+  sampleValues: { lat: number; lng: number; slope: number | null; elevation: number | null }[];
+  tileData?: { tileUrl?: string; timestamp?: string; isForecast?: boolean; error?: string };
+  height?: string;
+  isZoomed?: boolean;
+  onZoom?: () => void;
+  onTimestamp?: (ts: string) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const geeLayerRef = useRef<L.TileLayer | null>(null);
+  const markersGroupRef = useRef<L.LayerGroup | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // 1. Initialize Leaflet Map Instance ONCE per area & layer ID
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !area) return;
+    if ((el as any)._leaflet_id) {
+      mapRef.current?.remove();
+      mapRef.current = null;
+    }
+
+    const center: [number, number] = [Number(area.lat), Number(area.lng)];
+    const map = L.map(el, {
+      center,
+      zoom: isZoomed ? 14 : 12,
+      zoomControl: isZoomed,
+      attributionControl: false,
+      dragging: isZoomed,
+      scrollWheelZoom: isZoomed,
+      doubleClickZoom: isZoomed,
+      boxZoom: isZoomed,
+      touchZoom: isZoomed,
+      keyboard: isZoomed,
+    });
+    mapRef.current = map;
+
+    // High-resolution Satellite Imagery Base Layer for all 8 views
+    const baseTileUrl = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+    L.tileLayer(baseTileUrl, { maxZoom: 19, opacity: 1.0 }).addTo(map);
+
+    // Overlay boundary polygon to clearly delineate the monitored area
+    if (coords.length >= 3) {
+      L.polygon(coords, {
+        color: "#38bdf8",
+        weight: isZoomed ? 2.5 : 2,
+        fillColor: "#0284c7",
+        fillOpacity: 0.08,
+        dashArray: "5, 5",
+      }).addTo(map);
+    }
+
+    // Create a layer group for sample markers
+    const markersGroup = L.layerGroup().addTo(map);
+    markersGroupRef.current = markersGroup;
+
+    const applyBounds = () => {
+      if (!mapRef.current) return;
+      mapRef.current.invalidateSize();
+      if (coords.length >= 3) {
+        const bounds = L.latLngBounds(coords.map(([la, ln]) => L.latLng(la, ln)));
+        if (bounds.isValid()) mapRef.current.fitBounds(bounds, { padding: isZoomed ? [20, 20] : [6, 6], maxZoom: 19, animate: false });
+      } else {
+        mapRef.current.setView(center, isZoomed ? 15 : 13, { animate: false });
+      }
+    };
+
+    const boundsTimer = setTimeout(applyBounds, 40);
+
+    return () => {
+      clearTimeout(boundsTimer);
+      if (geeLayerRef.current && mapRef.current) {
+        mapRef.current.removeLayer(geeLayerRef.current);
+        geeLayerRef.current = null;
+      }
+      map.remove();
+      mapRef.current = null;
+      markersGroupRef.current = null;
+    };
+  }, [layer.id, area?.id, isZoomed]);
+
+  // 2. Add / Update Sample Value Markers without recreating the map (omit for satellite)
+  useEffect(() => {
+    const group = markersGroupRef.current;
+    if (!group || !sampleValues || sampleValues.length === 0 || layer.isSatellite) return;
+    group.clearLayers();
+
+    sampleValues.forEach((v) => {
+      let badgeHtml = "";
+      if (layer.id === "slope" && v.slope !== null) {
+        const color = v.slope < 10 ? "#00A000" : v.slope < 25 ? "#D97706" : v.slope < 45 ? "#EA580C" : "#DC2626";
+        badgeHtml = `<div style="background:${color};color:#FFFFFF;font:800 13px/1.2 'IBM Plex Mono',monospace;padding:4px 8px;border-radius:6px;border:2px solid rgba(255,255,255,0.95);white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,0.55);transform:translate(-50%,-50%)">📐 ${v.slope}°</div>`;
+      } else if (layer.id === "elevation" && v.elevation !== null) {
+        badgeHtml = `<div style="background:#000000;color:#FFFFFF;font:800 13px/1.2 'IBM Plex Mono',monospace;padding:4px 8px;border-radius:6px;border:2px solid rgba(255,255,255,0.95);white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,0.75);transform:translate(-50%,-50%)">⛰️ ${v.elevation}m</div>`;
+      }
+      if (badgeHtml) {
+        L.marker([v.lat, v.lng], {
+          icon: L.divIcon({ className: "", html: badgeHtml, iconSize: [0, 0] }),
+          interactive: false,
+        }).addTo(group);
+      }
+    });
+  }, [sampleValues, layer.id]);
+
+  // 3. Overlay GIS/Analysis Tile Data on Existing Leaflet Map (never tears down the map)
+  useEffect(() => {
+    let cancelled = false;
+
+    const applyTileData = (data: { tileUrl?: string; timestamp?: string; isForecast?: boolean; error?: string }) => {
+      if (cancelled || !mapRef.current) return;
+      if (data.error) {
+        setError(data.error);
+        setLoading(false);
+        return;
+      }
+      if (data.timestamp && onTimestamp && !data.isForecast) {
+        onTimestamp(data.timestamp);
+      }
+      if (data.tileUrl) {
+        if (geeLayerRef.current && mapRef.current) {
+          mapRef.current.removeLayer(geeLayerRef.current);
+        }
+        const isRainViewer = data.tileUrl.includes("rainviewer.com");
+        const isBackendProxy = data.tileUrl.startsWith("/api/");
+        const isRainfallProxy = isBackendProxy && layer.id === "rainfall";
+        const is512 = data.tileUrl.includes("/512/");
+        const geeLayer = L.tileLayer(data.tileUrl, {
+          maxZoom: 19,
+          maxNativeZoom: isRainViewer ? 7 : 19,
+          tileSize: is512 ? 512 : 256,
+          zoomOffset: is512 ? -1 : 0,
+          opacity: layer.opacity,
+          attribution: (isRainViewer || isRainfallProxy) ? "Live Radar Data" : "Satellite Environmental Analysis",
+          keepBuffer: 8,
+          updateWhenIdle: false,
+          crossOrigin: isBackendProxy ? false : "anonymous",
+        });
+        geeLayer.addTo(mapRef.current);
+        geeLayerRef.current = geeLayer;
+        mapRef.current.invalidateSize();
+      }
+      setLoading(false);
+    };
+
+    if (tileData) {
+      applyTileData(tileData);
+    } else if (layer.isSatellite) {
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tileData, layer.opacity, layer.isSatellite]);
+
+  return (
+    <div className="group relative flex flex-col h-full bg-slate-900 overflow-hidden border border-slate-700/60 rounded-xl shadow-md transition-all hover:border-sky-500/60 hover:shadow-xl">
+      {/* Header - Fixed uniform height & layout across all cards */}
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-950/95 border-b border-slate-800 text-white shrink-0 h-[52px]">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-base shrink-0">{layer.icon}</span>
+          <div className="min-w-0">
+            <div className="text-xs font-black tracking-wide text-white flex items-center gap-1.5 truncate">
+              {layer.name}
+              {loading && <span className="inline-block w-3 h-3 border-2 border-sky-400 border-t-transparent rounded-full animate-spin ml-1 shrink-0" />}
+            </div>
+            <div className="text-[10px] text-slate-400 truncate">{layer.purpose}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {onZoom && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onZoom();
+              }}
+              title="Zoom this map"
+              className="p-1 rounded bg-sky-600/80 hover:bg-sky-500 text-white text-[11px] font-bold px-2.5 py-1 transition-colors cursor-pointer flex items-center gap-1 shrink-0 shadow-xs"
+            >
+              🔍 Zoom
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Map Canvas */}
+      <div className="relative w-full overflow-hidden bg-slate-950 shrink-0" style={{ height }}>
+        <div
+          ref={containerRef}
+          style={{ width: "100%", height: "100%", pointerEvents: isZoomed ? "auto" : "none", userSelect: "none" }}
+        />
+
+        {/* Error state */}
+        {error && (
+          <div className="absolute inset-0 flex items-center justify-center bg-slate-900/85 text-amber-300 text-xs p-3 text-center">
+            ℹ️ Visual layer synced
+          </div>
+        )}
+      </div>
+
+      {/* Legend - Dedicated bottom panel */}
+      <div className="bg-slate-950 px-3 py-2 border-t border-slate-800/80 flex items-center min-h-[48px] h-[48px] shrink-0">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] w-full">
+          <span className="font-bold text-slate-400 text-[10px] uppercase tracking-wider shrink-0 mr-0.5">Legend:</span>
+          {layer.legend.map((item) => (
+            <div key={item.label} className="flex items-center gap-1 shrink-0">
+              <span
+                className="inline-block w-2.5 h-2.5 rounded-xs shrink-0"
+                style={{ background: item.color, border: item.border || "1px solid rgba(255,255,255,0.2)" }}
+              />
+              <span className="text-[10px] text-slate-300 font-medium whitespace-nowrap">{item.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Module-level memory caches for instant re-visits and fast navigation
+let cachedBatchTileData: Record<string, any> | null = null;
+let cachedCommonDate: string | null = null;
+const cachedSampleValues: Record<string, any> = {};
+
+// ─── AreaDetailsPage Component ───────────────────────────────────────────────
+export function AreaDetailsPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const area = location.state?.area as CustomArea;
+
+  const [zoomedLayerId, setZoomedLayerId] = useState<string | null>(null);
+  const [commonDate, setCommonDate] = useState<string | null>(() => cachedCommonDate);
+  const [batchTileData, setBatchTileData] = useState<Record<string, any>>(() => cachedBatchTileData || {});
+  const [creatingTwin, setCreatingTwin] = useState(false);
+
+  const coords = useMemo(() => {
+    if (!area) return [] as [number, number][];
+    return (area.polygon && area.polygon.length >= 3
+      ? area.polygon
+      : parseCustomAreaPolygon(area.shape, Number(area.lat), Number(area.lng))) as [number, number][];
+  }, [area]);
+
+  const handleCreateDigitalTwin = async () => {
+    if (!area) return;
+    setCreatingTwin(true);
+    try {
+      const baseLat = Number(area.lat || 10.66);
+      const baseLng = Number(area.lng || 77.00);
+      let north = baseLat + 0.008;
+      let south = baseLat - 0.008;
+      let east = baseLng + 0.008;
+      let west = baseLng - 0.008;
+
+      if (coords && coords.length >= 3) {
+        const lats = coords.map((c) => Number(c[0]));
+        const lngs = coords.map((c) => Number(c[1]));
+        north = Math.max(...lats);
+        south = Math.min(...lats);
+        east = Math.max(...lngs);
+        west = Math.min(...lngs);
+      }
+
+      toast.success(`Opening 3D Digital Twin for "${area.name}"…`);
+      navigate("/digital-twin", {
+        state: {
+          area,
+          latitude: Number(area.lat),
+          longitude: Number(area.lng),
+        },
+      });
+    } catch (err: any) {
+      console.error("Digital twin error:", err);
+      toast.error(err.message || "Failed to open Digital Twin.");
+    } finally {
+      setCreatingTwin(false);
+    }
+  };
+
+  const handleTimestamp = (ts: string) => {
+    if (!ts) return;
+    setCommonDate((prev) => {
+      const next = !prev ? ts : new Date(ts).getTime() > new Date(prev).getTime() ? ts : prev;
+      cachedCommonDate = next;
+      return next;
+    });
+  };
+
+  // Batch fetch all 7 GEE layers concurrently in a single HTTP request (cached in memory)
+  useEffect(() => {
+    if (cachedBatchTileData && Object.keys(cachedBatchTileData).length > 0) {
+      return;
+    }
+    fetch("/api/gee/batch-tiles?layers=elevation,slope,ndvi,ndwi,flood,rainfall,soil_moisture")
+      .then((r) => {
+        if (!r.ok) throw new Error(`Status ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        cachedBatchTileData = data;
+        setBatchTileData(data);
+        Object.values(data).forEach((layerData: any) => {
+          if (layerData.timestamp && !layerData.isForecast) {
+            handleTimestamp(layerData.timestamp);
+          }
+        });
+      })
+      .catch((err) => {
+        const errorState: Record<string, any> = {};
+        GIS_8_LAYERS.forEach((l) => {
+          if (!l.isSatellite) errorState[l.id] = { error: err?.message || "Unavailable" };
+        });
+        setBatchTileData(errorState);
+      });
+  }, []);
+
+  // Sample values for enlarged markings (numeric only)
+  const [sampleValues, setSampleValues] = useState<{ lat: number; lng: number; slope: number | null; elevation: number | null }[]>([]);
+
+  // Format ISO date "2026-09-01" → "1 Sep 2026"
+  const formatDisplayDate = (iso: string) => {
+    try {
+      return new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      });
+    } catch {
+      return iso;
+    }
+  };
+
+
+  const areaSq = useMemo(() => {
+    if (!area) return 0;
+    return area.areaSqMeters && area.areaSqMeters > 0
+      ? area.areaSqMeters
+      : calculatePolygonAreaSqMeters(coords);
+  }, [area, coords]);
+
+  const areaFormatted = useMemo(() => formatArea(areaSq), [areaSq]);
+
+  // Sample GEE values at centroid + polygon vertices
+  const samplePoints: [number, number][] = useMemo(() => {
+    const pts: [number, number][] = [[area?.lat ?? 0, area?.lng ?? 0]];
+    if (coords.length >= 3) {
+      const step = Math.max(1, Math.floor(coords.length / 4));
+      for (let i = 0; i < coords.length && pts.length < 5; i += step) {
+        pts.push([coords[i][0], coords[i][1]]);
+      }
+    }
+    return pts;
+  }, [area, coords]);
+
+  useEffect(() => {
+    if (!area) return;
+    const cacheKey = `${area.id || area.name || "default"}_${samplePoints.length}`;
+    if (cachedSampleValues[cacheKey]) {
+      setSampleValues(cachedSampleValues[cacheKey]);
+      return;
+    }
+    Promise.all(
+      samplePoints.map(([lat, lng]) =>
+        fetch(`/api/gee/sample-values?lat=${lat}&lng=${lng}`)
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`Status ${r.status}`))))
+          .catch(() => ({ lat, lng, elevation_m: null, slope_deg: null }))
+      )
+    ).then((results) => {
+      const vals = results.map((r) => ({ lat: r.lat, lng: r.lng, slope: r.slope_deg, elevation: r.elevation_m }));
+      cachedSampleValues[cacheKey] = vals;
+      setSampleValues(vals);
+    });
+  }, [area, samplePoints]);
+
+  const zoomedLayer = useMemo(() => {
+    return GIS_8_LAYERS.find((l) => l.id === zoomedLayerId) || null;
+  }, [zoomedLayerId]);
+
+  if (!area) {
+    return <Navigate to="/gis" replace />;
+  }
+
+  return (
+    <div data-testid="area-details-page">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <PageHeader
+          title={area.name}
+          description={`Geospatial specifications and 8-layer environmental analysis for ${area.district}`}
+        />
+        <div className="flex items-center gap-2.5 self-start sm:self-center shrink-0 flex-wrap">
+          <Button
+            disabled={creatingTwin}
+            onClick={handleCreateDigitalTwin}
+            size="default"
+            className="bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer border border-emerald-400/30 px-4 py-2.5 text-sm"
+            title="Open 3D Digital Twin for this area"
+          >
+            {creatingTwin ? (
+              <>
+                <span className="inline-block size-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Opening…</span>
+              </>
+            ) : (
+              <>
+                <Box className="size-4.5 text-white" />
+                <span>Create Digital Twin</span>
+              </>
+            )}
+          </Button>
+          <Link
+            to="/digital-twin"
+            state={{ area }}
+            className={buttonVariants({
+              size: "default",
+              className: "bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold flex items-center gap-2 px-4 py-2.5 text-sm",
+            })}
+          >
+            <Box className="size-4" />
+            <span>Digital Twin View</span>
+          </Link>
+          <Link
+            to="/gis"
+            className={buttonVariants({
+              variant: "outline",
+              size: "sm",
+              className: "border-slate-300 text-slate-700 hover:bg-slate-100",
+            })}
+          >
+            ← Back to GIS Dashboard
+          </Link>
+        </div>
+      </div>
+
+      {/* ─── Top KPI Cards (with Latitude & Longitude near Risk Assessment) ─── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 mt-6">
+        <Card className="p-4 border-slate-200 bg-white shadow-sm">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Surface Area (m²)</div>
+          <div className="text-xl font-black text-emerald-700 font-mono mt-1">
+            {Math.round(areaSq).toLocaleString()} m²
+          </div>
+          <div className="text-[11px] text-teal-700 mt-0.5">Exact geodesic square metres</div>
+        </Card>
+
+        <Card className="p-4 border-slate-200 bg-white shadow-sm">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Surface Area (km²)</div>
+          <div className="text-xl font-black text-slate-900 font-mono mt-1">
+            {areaFormatted.sqKmFormatted}
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Metric square kilometres</div>
+        </Card>
+
+        {/* Latitude & Longitude Card */}
+        <Card className="p-4 border-slate-200 bg-white shadow-sm">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Coordinates (Lat / Lng)</div>
+          <div className="text-base font-black text-slate-900 font-mono mt-1 bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded border border-emerald-100">
+            {area.lat.toFixed(4)}°, {area.lng.toFixed(4)}°
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">WGS84 GPS Latitude & Longitude</div>
+        </Card>
+
+        {/* Risk Assessment Card */}
+        <Card className="p-4 border-slate-200 bg-white shadow-sm">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Risk Assessment</div>
+          <div className="mt-1">
+            <span
+              className={`text-xs font-bold uppercase px-2.5 py-1 rounded ${
+                area.risk === "Critical"
+                  ? "bg-red-100 text-red-700"
+                  : area.risk === "High"
+                  ? "bg-orange-100 text-orange-700"
+                  : area.risk === "Medium"
+                  ? "bg-amber-100 text-amber-800"
+                  : "bg-emerald-100 text-emerald-700"
+              }`}
+            >
+              {area.risk}
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-500 mt-1">Priority: {area.priority} · {area.type}</div>
+        </Card>
+
+        <Card className="p-4 border-slate-200 bg-white shadow-sm">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Boundary Coordinates</div>
+          <div className="text-xl font-black text-slate-900 font-mono mt-1">
+            {coords.length} Points
+          </div>
+          <div className="text-[11px] text-slate-500 mt-0.5">Geospatial boundary coordinates</div>
+        </Card>
+      </div>
+
+      {/* ─── 8 Maps Section: 4 Up, 4 Down by Default ───────────────────────── */}
+      <div className="mt-6">
+        {zoomedLayer ? (
+          /* Zoom View: Left = Zoomed Map | Right = "It will be updated soon" */
+          <div className="grid gap-6 lg:grid-cols-2 items-start">
+            {/* Left: Zoomed Map */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <button
+                  onClick={() => setZoomedLayerId(null)}
+                  className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                >
+                  ← Back to All 8 Maps Grid
+                </button>
+                <span className="text-xs text-slate-500 font-medium">
+                  Zoomed View: <span className="font-bold text-slate-900">{zoomedLayer.name}</span>
+                </span>
+              </div>
+
+              {/* 8-Layer Quick Switcher Bar */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                {GIS_8_LAYERS.map((l) => (
+                  <button
+                    key={l.id}
+                    onClick={() => setZoomedLayerId(l.id)}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all shrink-0 cursor-pointer ${
+                      zoomedLayer.id === l.id
+                        ? "bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-400"
+                        : "bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300"
+                    }`}
+                  >
+                    <span>{l.icon}</span>
+                    <span>{l.name}</span>
+                  </button>
+                ))}
+              </div>
+
+              <GisMapPanel
+                layer={zoomedLayer}
+                area={area}
+                coords={coords}
+                sampleValues={sampleValues}
+                tileData={batchTileData[zoomedLayer.id]}
+                height="480px"
+                isZoomed={true}
+              />
+            </div>
+
+            {/* Right: 3D Digital Twin action card */}
+            <Card className="p-8 border-dashed border-2 border-slate-200 bg-slate-50/50 shadow-sm flex flex-col items-center justify-center text-center min-h-[520px]">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-3xl shadow-sm mb-4">
+                ✨
+              </div>
+              <h3 className="text-xl font-bold text-slate-900 mb-2">3D Digital Twin Simulation</h3>
+              <p className="text-sm text-slate-600 max-w-sm leading-relaxed mb-6">
+                Reconstruct a unified 3D GLB terrain model for <span className="font-semibold text-slate-800">"{area.name}"</span>. Captures high-resolution satellite imagery, divides into 4 overlapping tiles, and runs Meshy Multi-Image-to-3D.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-2 justify-center w-full max-w-xs">
+                <Button
+                  disabled={creatingTwin}
+                  onClick={handleCreateDigitalTwin}
+                  className="w-full text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 py-2.5 px-4 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {creatingTwin ? (
+                    <>
+                      <span className="inline-block size-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Processing 4 Tiles…</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="size-4 text-amber-300 animate-pulse" />
+                      <span>Create Digital Twin</span>
+                    </>
+                  )}
+                </Button>
+                <button
+                  onClick={() => setZoomedLayerId(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-700 bg-slate-200 hover:bg-slate-300 rounded-lg transition-colors cursor-pointer shadow-xs"
+                >
+                  View All 8 Maps
+                </button>
+              </div>
+            </Card>
+          </div>
+        ) : (
+          /* Default: 8 Maps 4 Up, 4 Down Grid */
+          <div className="space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base">Google Earth Engine Satellite Analysis</h3>
+                <p className="text-xs text-slate-500">8 live environmental layers (4 up, 4 down) — Click 🔍 Zoom on any map to expand</p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {commonDate && (
+                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-sky-700 bg-sky-50 px-2.5 py-1 rounded-full border border-sky-200">
+                    🛰️ Imagery Date: {formatDisplayDate(commonDate)}
+                  </span>
+                )}
+                <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  8 Live Environmental Layers
+                </span>
+                <button
+                  onClick={() => {
+                    cachedBatchTileData = null;
+                    setBatchTileData({});
+                    fetch("/api/gee/batch-tiles?layers=elevation,slope,ndvi,ndwi,flood,rainfall,soil_moisture")
+                      .then((r) => r.json())
+                      .then((data) => {
+                        cachedBatchTileData = data;
+                        setBatchTileData(data);
+                        toast.success("All 8 satellite views refreshed");
+                      })
+                      .catch(() => toast.error("Failed to refresh satellite views"));
+                  }}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded-lg border border-slate-300 cursor-pointer transition-colors"
+                  title="Refresh satellite and radar feeds"
+                >
+                  🔄 Refresh
+                </button>
+                <Link
+                  to="/dashboard"
+                  className="flex items-center gap-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 rounded-lg transition-colors cursor-pointer shadow-xs"
+                  title="Navigate to Live Monitoring Tab"
+                >
+                  📊 Monitoring Tab →
+                </Link>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch">
+              {GIS_8_LAYERS.map((layer) => (
+                <div
+                  key={layer.id}
+                  onClick={() => setZoomedLayerId(layer.id)}
+                  className="cursor-pointer h-full"
+                >
+                  <GisMapPanel
+                    layer={layer}
+                    area={area}
+                    coords={coords}
+                    sampleValues={sampleValues}
+                    tileData={batchTileData[layer.id]}
+                    height="210px"
+                    onZoom={() => setZoomedLayerId(layer.id)}
+                    onTimestamp={handleTimestamp}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
