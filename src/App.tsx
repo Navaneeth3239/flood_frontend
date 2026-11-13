@@ -28,6 +28,7 @@ const ReportsPage = lazy(() => import("@/pages/OpsPages").then(m => ({ default: 
 const RiskAssessmentPage = lazy(() => import("@/pages/OpsPages").then(m => ({ default: m.RiskAssessmentPage })));
 const SettingsPage = lazy(() => import("@/pages/OpsPages").then(m => ({ default: m.SettingsPage })));
 const UserManagementPage = lazy(() => import("@/pages/OpsPages").then(m => ({ default: m.UserManagementPage })));
+const SensorTelemetryPage = lazy(() => import("@/pages/SensorTelemetryPage"));
 
 export default function App() {
   return (
@@ -60,7 +61,7 @@ export default function App() {
             <Route path="/alerts" element={<RoleBasedRoute allow={["admin", "gov_officer", "field_officer"]}><AlertsPage /></RoleBasedRoute>} />
             <Route path="/analytics" element={<RoleBasedRoute allow={["admin", "gov_officer"]}><AnalyticsPage /></RoleBasedRoute>} />
             <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/sensors" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/sensors" element={<SensorTelemetryPage />} />
             <Route path="/users" element={<RoleBasedRoute allow={["admin"]}><UserManagementPage /></RoleBasedRoute>} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/profile" element={<ProfilePage />} />

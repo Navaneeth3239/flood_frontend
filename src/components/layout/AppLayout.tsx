@@ -24,6 +24,7 @@ interface NavItem {
 
 const MAIN_NAV: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: LayoutDashboard, allow: ["admin", "gov_officer", "field_officer", "viewer"] },
+  { label: "Live Telemetry", to: "/sensors", icon: Activity, allow: ["admin", "gov_officer", "field_officer", "viewer"] },
   { label: "GIS Monitoring", to: "/gis", icon: Map, allow: ["admin", "gov_officer", "field_officer", "viewer"] },
   { label: "Digital Twin", to: "/digital-twin", icon: Boxes, allow: ["admin", "gov_officer"] },
   { label: "SOS Alerts", to: "/sos-alerts", icon: ShieldAlert, allow: ["admin", "gov_officer", "field_officer", "viewer"] },
