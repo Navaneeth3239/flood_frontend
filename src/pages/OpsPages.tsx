@@ -1237,8 +1237,9 @@ export function UserManagementPage() {
   });
 
   // Telephony Live Dispatch State & Mutation
-  const [telephonyTestPhone, setTelephonyTestPhone] = useState("+919003899180");
-  const [telephonyTestMsg, setTelephonyTestMsg] = useState("Flood in area evacuate now. Seek high ground immediately.");
+  const [telephonyTestPhone, setTelephonyTestPhone] = useState("+919865013239");
+  const [telephonyTestMsg, setTelephonyTestMsg] = useState("🚨 EMERGENCY FLOOD WARNING: Evacuate immediately! Rapid water rise in monitoring zone. Seek high ground now.");
+  const [lastDispatchedInfo, setLastDispatchedInfo] = useState<{ callSid?: string; smsSid?: string; time?: string } | null>(null);
 
   const telephonyStatusQuery = useQuery({
     queryKey: ["telephony-status"],
@@ -1251,9 +1252,16 @@ export function UserManagementPage() {
       apiPost("/telephony/test-alert", payload),
     onSuccess: (res: any) => {
       const phone = res?.results?.phone || telephonyTestPhone;
-      const callStatus = res?.results?.call?.success ? "Call placed 📞" : res?.results?.call ? "Call error" : null;
-      const smsStatus = res?.results?.sms?.success ? "SMS sent 💬" : res?.results?.sms ? "SMS error" : null;
+      const call = res?.results?.call;
+      const sms = res?.results?.sms;
+      const callStatus = call?.success ? `Call placed (${call.sid ? call.sid.slice(0, 10) + '...' : 'OK'}) 📞` : call ? "Call error" : null;
+      const smsStatus = sms?.success ? `SMS sent (${sms.sid ? sms.sid.slice(0, 10) + '...' : 'OK'}) 💬` : sms ? "SMS error" : null;
       const summary = [callStatus, smsStatus].filter(Boolean).join(" & ");
+      setLastDispatchedInfo({
+        callSid: call?.sid,
+        smsSid: sms?.sid,
+        time: new Date().toLocaleTimeString(),
+      });
       toast.success(summary ? `Alert dispatched to ${phone}: ${summary}` : `Telephony alert dispatched to ${phone}`);
       qc.invalidateQueries({ queryKey: ["telephony-status"] });
     },
@@ -2601,8 +2609,23 @@ export function UserManagementPage() {
                   </span>
                 </div>
                 <p className="text-xs text-slate-300">
-                  Outbound line: <strong className="font-mono text-cyan-300">+1 (563) 239-3112</strong> · Voice speech: &quot;Flood in area evacuate now&quot; · SID: <span className="font-mono text-slate-400">AC71d2...fb46</span>
+                  Outbound line: <strong className="font-mono text-cyan-300">{telephonyStatusQuery.data?.sender_phone || "+1 (737) 250-8034"}</strong> · Speech Webhook: <span className="font-mono text-xs text-emerald-300">Voice Speech Recognition</span> · SID: <span className="font-mono text-slate-400">{telephonyStatusQuery.data?.account_sid || "AC6133...786e"}</span>
                 </p>
+                {lastDispatchedInfo && (
+                  <div className="flex items-center gap-2 text-[11px] text-emerald-300 font-mono mt-1">
+                    <span>⚡ Last dispatched at {lastDispatchedInfo.time}:</span>
+                    {lastDispatchedInfo.callSid && (
+                      <span className="bg-emerald-900/60 border border-emerald-500/40 px-1.5 py-0.5 rounded text-emerald-200">
+                        Call SID: {lastDispatchedInfo.callSid}
+                      </span>
+                    )}
+                    {lastDispatchedInfo.smsSid && (
+                      <span className="bg-sky-900/60 border border-sky-500/40 px-1.5 py-0.5 rounded text-sky-200">
+                        SMS SID: {lastDispatchedInfo.smsSid}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Direct Quick Test Inputs & Triggers */}
@@ -2610,7 +2633,7 @@ export function UserManagementPage() {
                 <Input
                   value={telephonyTestPhone}
                   onChange={(e) => setTelephonyTestPhone(e.target.value)}
-                  placeholder="+919003899180"
+                  placeholder="+919865013239"
                   className="h-8 w-36 bg-white/10 border-white/20 text-xs font-mono text-white placeholder:text-slate-400 focus:bg-white/20"
                   data-testid="telephony-test-phone-input"
                 />
