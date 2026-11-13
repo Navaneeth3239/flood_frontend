@@ -727,6 +727,25 @@ export function GISMonitoringPage() {
                 setCustomAreas((prev) => [newArea, ...prev]);
                 setSelectedArea(newArea);
                 setFocusedArea(newArea);
+                setDrawMode(false);
+                setCurrentLatlngs([]);
+                try {
+                  const cached = localStorage.getItem("cached_custom_areas");
+                  const currentList = cached ? JSON.parse(cached) : [];
+                  const updated = [
+                    {
+                      id: newArea.id,
+                      name: newArea.name,
+                      priority: newArea.priority,
+                      lat: newArea.lat,
+                      lng: newArea.lng,
+                      shape: newArea.shape,
+                      polygon: newArea.polygon,
+                    },
+                    ...currentList.filter((a: any) => a.id !== newArea.id),
+                  ];
+                  localStorage.setItem("cached_custom_areas", JSON.stringify(updated));
+                } catch {}
               }}
               testId="gis-monitoring-map"
               detailsPanel={detailsContent}

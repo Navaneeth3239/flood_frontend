@@ -66,9 +66,31 @@ export async function recalculateTowerRisk(waterLevelM?: number): Promise<{
   return apiPost<any>("/towers/recalculate-risk", { water_level_m: waterLevelM });
 }
 
+export interface FetchOsmTowersParams {
+  lat?: number;
+  lng?: number;
+  radius_km?: number;
+  minLat?: number;
+  minLon?: number;
+  maxLat?: number;
+  maxLon?: number;
+  save_to_db?: boolean;
+}
+
+export async function fetchOsmTowers(params?: FetchOsmTowersParams): Promise<{
+  status: string;
+  source: string;
+  count: number;
+  towers: MobileTower[];
+  endpoint_used?: string;
+  message?: string;
+}> {
+  return apiPost<any>("/towers/fetch-osm", params || {});
+}
+
 // ── Color and Badge Constants ───────────────────────────────────────────
 export const TOWER_RISK_COLORS: Record<string, { bg: string; text: string; hex: string; border: string }> = {
-  Low: { bg: "bg-emerald-100", text: "text-emerald-800", hex: "#10B981", border: "border-emerald-500" },
+  Low: { bg: "bg-emerald-100", text: "text-emerald-800", hex: "#22C55E", border: "border-emerald-500" },
   Moderate: { bg: "bg-yellow-100", text: "text-yellow-800", hex: "#FACC15", border: "border-yellow-500" },
   High: { bg: "bg-orange-100", text: "text-orange-800", hex: "#F97316", border: "border-orange-500" },
   Critical: { bg: "bg-red-100", text: "text-red-800", hex: "#EF4444", border: "border-red-500" },

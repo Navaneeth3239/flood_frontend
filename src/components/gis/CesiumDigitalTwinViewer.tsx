@@ -94,6 +94,7 @@ import localBuildingsData from "@/data/pollachi_buildings.json";
 import { CesiumMobileTowerLayer } from "./CesiumMobileTowerLayer";
 import {
   fetchTowers,
+  fetchOsmTowers,
   importGeoJsonTowers,
   recalculateTowerRisk,
   TOWER_RISK_COLORS,
@@ -378,13 +379,14 @@ export function CesiumDigitalTwinViewer({
   // ─── 🗼 SHARED MOBILE NETWORK COMMUNICATION TOWERS ───
   const towerLayerRef = useRef<CesiumMobileTowerLayer | null>(null);
   const [towers, setTowers] = useState<MobileTower[]>([]);
-  const [showTowers, setShowTowers] = useState<boolean>(true);
+  const [showTowers, setShowTowers] = useState<boolean>(false);
   const [showTowersPanel, setShowTowersPanel] = useState<boolean>(false);
   const [towerOperatorFilter, setTowerOperatorFilter] = useState<TowerOperator | "All">("All");
   const [towerRiskFilter, setTowerRiskFilter] = useState<TowerFloodRisk | "All">("All");
   const [selectedTower, setSelectedTower] = useState<MobileTower | null>(null);
   const [isImportingGeoJson, setIsImportingGeoJson] = useState<boolean>(false);
   const [isRecalculatingRisk, setIsRecalculatingRisk] = useState<boolean>(false);
+  const [isFetchingOsmTowers, setIsFetchingOsmTowers] = useState<boolean>(false);
   const towerFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadMobileTowers = useCallback(async () => {
@@ -1451,14 +1453,14 @@ export function CesiumDigitalTwinViewer({
 
     const activePoly = getActivePolygon();
 
-    // Group segments into 6 appearance tiers for batching
+    // Group segments into appearance tiers with orange palette (#FB8C00)
     const tiers: Record<string, { instances: any[]; color: string; width: number }> = {
       flooded: { instances: [], color: "#ef4444", width: 5.5 },
-      highway: { instances: [], color: "#f59e0b", width: 5.0 },
-      primary: { instances: [], color: "#fbbf24", width: 4.2 },
-      secondary: { instances: [], color: "#fef08a", width: 3.5 },
-      residential: { instances: [], color: "#ffffff", width: 2.8 },
-      service: { instances: [], color: "#cbd5e1", width: 2.0 },
+      highway: { instances: [], color: "#E65100", width: 5.0 },
+      primary: { instances: [], color: "#FB8C00", width: 4.2 },
+      secondary: { instances: [], color: "#FB8C00", width: 3.5 },
+      residential: { instances: [], color: "#FFA726", width: 2.8 },
+      service: { instances: [], color: "#FFB74D", width: 2.0 },
     };
 
     roads.forEach((road) => {
@@ -1630,7 +1632,7 @@ export function CesiumDigitalTwinViewer({
             show: visible,
             polygon: {
               hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(outerRing), holes),
-              material: Cesium.Color.fromCssColorString("#06b6d4").withAlpha(0.80),
+              material: Cesium.Color.fromCssColorString("#1976D2").withAlpha(0.80),
               height: 0,
               heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
               classificationType: Cesium.ClassificationType.TERRAIN,
@@ -1674,7 +1676,7 @@ export function CesiumDigitalTwinViewer({
                 show: visible,
                 polygon: {
                   hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(flatRing)),
-                  material: Cesium.Color.fromCssColorString("#06b6d4").withAlpha(0.80),
+                  material: Cesium.Color.fromCssColorString("#1976D2").withAlpha(0.80),
                   height: 0,
                   heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
                   classificationType: Cesium.ClassificationType.TERRAIN,
@@ -1717,7 +1719,7 @@ export function CesiumDigitalTwinViewer({
 
     // --- Batch all channel instances into two GroundPolylinePrimitive (main + tributary) ---
     // This replaces hundreds of individual entity draw calls with just 2 GPU draw calls.
-    const riverColor = Cesium.Color.fromCssColorString("#06b6d4").withAlpha(0.90);
+    const riverColor = Cesium.Color.fromCssColorString("#1976D2").withAlpha(0.92);
 
     if (mainInstances.length > 0) {
       try {
@@ -1738,7 +1740,7 @@ export function CesiumDigitalTwinViewer({
 
     if (tributaryInstances.length > 0) {
       try {
-        const tributaryColor = Cesium.Color.fromCssColorString("#06b6d4").withAlpha(0.75);
+        const tributaryColor = Cesium.Color.fromCssColorString("#1E88E5").withAlpha(0.85);
         const prim = new Cesium.GroundPolylinePrimitive({
           geometryInstances: tributaryInstances,
           appearance: new Cesium.PolylineMaterialAppearance({
@@ -1909,7 +1911,7 @@ export function CesiumDigitalTwinViewer({
             height: height,
             elevation: building.properties?.elevation || building.properties?.elevation_m || 298.0,
             flood_risk: "MONITORED",
-            risk_color: "#f97316",
+            risk_color: "#E53935",
             landslide_risk: building.properties?.landslide_risk || "LOW",
             distance_from_river: building.properties?.distance_from_river || `${building.properties?.distance_to_river_m || 350} m`,
             evacuation_zone: building.properties?.evacuation_zone || "Zone B (Monitored Area)",
@@ -1937,7 +1939,7 @@ export function CesiumDigitalTwinViewer({
                 id: enrichedProps,
                 attributes: {
                   color: Cesium.ColorGeometryInstanceAttribute.fromColor(
-                    Cesium.Color.fromCssColorString("#f97316").withAlpha(0.88)
+                    Cesium.Color.fromCssColorString("#E53935").withAlpha(0.88)
                   ),
                 },
               })
@@ -1990,7 +1992,7 @@ export function CesiumDigitalTwinViewer({
 
     if (outlineInstances.length > 0) {
       try {
-        const outlineColor = Cesium.Color.fromCssColorString("#ea580c").withAlpha(0.95);
+        const outlineColor = Cesium.Color.fromCssColorString("#B71C1C").withAlpha(0.95);
         const outlinePrimitive = new Cesium.GroundPolylinePrimitive({
           geometryInstances: outlineInstances,
           appearance: new Cesium.PolylineMaterialAppearance({
@@ -3904,15 +3906,33 @@ export function CesiumDigitalTwinViewer({
     borderPositions.push(cleanCoords[0][1], cleanCoords[0][0]);
 
     try {
+      // Translucent monitoring area surface fill (#3498DB at ~20% opacity)
+      const fillPositions: number[] = [];
+      cleanCoords.forEach(([lat, lng]) => {
+        fillPositions.push(lng, lat);
+      });
+      const areaFillEnt = viewer.entities.add({
+        name: "Selected Area Fill",
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(Cesium.Cartesian3.fromDegreesArray(fillPositions)),
+          material: Cesium.Color.fromCssColorString("#3498DB").withAlpha(0.20),
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          classificationType: Cesium.ClassificationType.TERRAIN,
+          zIndex: 1,
+        },
+      });
+      maskEntitiesRef.current.push(areaFillEnt);
+
+      // Crisp dark blue boundary outline (#164B75)
       const borderEnt = viewer.entities.add({
         name: "Selected Area Boundary",
         polyline: {
           positions: Cesium.Cartesian3.fromDegreesArray(borderPositions),
           width: 4,
           material: new Cesium.PolylineOutlineMaterialProperty({
-            color: Cesium.Color.WHITE,
-            outlineColor: Cesium.Color.fromAlpha(Cesium.Color.WHITE, 0.4),
-            outlineWidth: 2,
+            color: Cesium.Color.fromCssColorString("#164B75"),
+            outlineColor: Cesium.Color.WHITE.withAlpha(0.6),
+            outlineWidth: 1.5,
           }),
           clampToGround: true,
         },
@@ -7858,6 +7878,36 @@ export function CesiumDigitalTwinViewer({
                 })}
               </div>
             </div>
+
+            {/* Fetch OpenStreetMap Towers via Overpass API */}
+            <button
+              type="button"
+              disabled={isFetchingOsmTowers}
+              onClick={async () => {
+                setIsFetchingOsmTowers(true);
+                try {
+                  const res = await fetchOsmTowers({
+                    lat: latitude || 10.063857,
+                    lng: longitude || 77.105736,
+                    radius_km: 3.0,
+                  });
+                  toast.success(
+                    res.status === "fallback"
+                      ? `Overpass API: loaded ${res.count} cached mobile towers`
+                      : `Fetched and synced ${res.count} mobile towers from OpenStreetMap (Overpass API)`
+                  );
+                  loadMobileTowers();
+                } catch (e: any) {
+                  toast.error(e.message || "Failed to fetch OSM towers.");
+                } finally {
+                  setIsFetchingOsmTowers(false);
+                }
+              }}
+              className="w-full py-1.5 bg-emerald-950/80 hover:bg-emerald-900/90 text-emerald-300 font-bold text-xs rounded-lg border border-emerald-700/60 shadow-sm cursor-pointer transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              <Globe className={`size-3.5 ${isFetchingOsmTowers ? "animate-spin text-emerald-300" : ""}`} />
+              <span>Fetch OpenStreetMap Towers</span>
+            </button>
 
             {/* Dynamic Flood Risk Recalculation Button */}
             <button

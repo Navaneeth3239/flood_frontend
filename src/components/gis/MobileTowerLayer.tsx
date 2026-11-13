@@ -15,12 +15,14 @@ import {
   Check,
   AlertTriangle,
   Info,
+  Globe,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { MobileTower, TowerOperator, TowerFloodRisk, TowerStats } from "@/lib/types";
 import {
   fetchTowers,
   fetchTowerStats,
+  fetchOsmTowers,
   importGeoJsonTowers,
   TOWER_RISK_COLORS,
   OPERATOR_COLORS,
@@ -58,8 +60,7 @@ function getDominantRisk(towers: MobileTower[]): TowerFloodRisk {
 
 // Generate SVG icon for a single tower marker
 function createTowerDivIcon(tower: MobileTower, isSelected: boolean): L.DivIcon {
-  const risk = (tower.flood_risk_level || "Low") as TowerFloodRisk;
-  const riskColor = TOWER_RISK_COLORS[risk]?.hex || "#10B981";
+  const towerGreen = "#22C55E";
   const op = tower.operator || "Unknown";
   const opLetter = op === "Jio" ? "J" : op === "Airtel" ? "A" : op === "Vi" ? "V" : op === "BSNL" ? "B" : "?";
 
@@ -73,7 +74,7 @@ function createTowerDivIcon(tower: MobileTower, isSelected: boolean): L.DivIcon 
       ? "#7C3AED"
       : op === "BSNL"
       ? "#D97706"
-      : "#64748B";
+      : "#16A34A";
 
   const size = isSelected ? 44 : 36;
   const half = size / 2;
@@ -95,14 +96,14 @@ function createTowerDivIcon(tower: MobileTower, isSelected: boolean): L.DivIcon 
         position: relative;
         width: ${size}px;
         height: ${size}px;
-        background: #0F172A;
-        border: 2.5px solid ${riskColor};
+        background: #022c22;
+        border: 2.5px solid ${towerGreen};
         border-radius: 50% 50% 50% 4px;
         transform: rotate(-45deg);
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 0 ${isSelected ? "14px" : "6px"} ${riskColor};
+        box-shadow: 0 0 ${isSelected ? "14px" : "8px"} ${towerGreen};
       ">
         <div style="
           transform: rotate(45deg);
@@ -112,16 +113,16 @@ function createTowerDivIcon(tower: MobileTower, isSelected: boolean): L.DivIcon 
           color: white;
         ">
           <!-- Recognizable Mobile Communication Mast SVG -->
-          <svg width="${size * 0.6}" height="${size * 0.6}" viewBox="0 0 24 24" fill="none" stroke="${riskColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg width="${size * 0.6}" height="${size * 0.6}" viewBox="0 0 24 24" fill="none" stroke="${towerGreen}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <!-- Mast legs and lattices -->
-            <path d="M12 2v20" stroke="white" stroke-width="2"/>
-            <path d="M7 22l5-18 5 18" stroke="white" stroke-width="1.8"/>
-            <path d="M8.5 16h7" stroke="white" stroke-width="1.5"/>
-            <path d="M10 11h4" stroke="white" stroke-width="1.5"/>
-            <circle cx="12" cy="3" r="1.5" fill="${riskColor}" stroke="${riskColor}"/>
+            <path d="M12 2v20" stroke="#FFFFFF" stroke-width="2"/>
+            <path d="M7 22l5-18 5 18" stroke="#FFFFFF" stroke-width="1.8"/>
+            <path d="M8.5 16h7" stroke="#FFFFFF" stroke-width="1.5"/>
+            <path d="M10 11h4" stroke="#FFFFFF" stroke-width="1.5"/>
+            <circle cx="12" cy="3" r="1.5" fill="${towerGreen}" stroke="${towerGreen}"/>
             <!-- Radio broadcast arcs -->
-            <path d="M4.93 4.93a10 10 0 0 1 14.14 0" stroke="${riskColor}" stroke-width="1.5" stroke-dasharray="2 1"/>
-            <path d="M7.76 7.76a6 6 0 0 1 8.48 0" stroke="${riskColor}" stroke-width="1.5"/>
+            <path d="M4.93 4.93a10 10 0 0 1 14.14 0" stroke="${towerGreen}" stroke-width="1.5" stroke-dasharray="2 1"/>
+            <path d="M7.76 7.76a6 6 0 0 1 8.48 0" stroke="${towerGreen}" stroke-width="1.5"/>
           </svg>
         </div>
       </div>
@@ -152,10 +153,10 @@ function createTowerDivIcon(tower: MobileTower, isSelected: boolean): L.DivIcon 
       <div style="
         width: 6px;
         height: 6px;
-        background: ${riskColor};
+        background: ${towerGreen};
         border-radius: 50%;
         margin-top: -3px;
-        box-shadow: 0 0 4px ${riskColor};
+        box-shadow: 0 0 4px ${towerGreen};
       "></div>
     </div>
   `;
@@ -312,6 +313,7 @@ export default function MobileTowerLayer({
   const [riskFilter, setRiskFilter] = useState<TowerFloodRisk | "All">("All");
   const [hudOpen, setHudOpen] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
+  const [isFetchingOsm, setIsFetchingOsm] = useState(false);
 
   // Layer group refs
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
@@ -508,6 +510,35 @@ export default function MobileTowerLayer({
     };
   }, [map]);
 
+  // Fetch OpenStreetMap Telecom Towers via Overpass API
+  const handleFetchOsmTowers = async () => {
+    setIsFetchingOsm(true);
+    try {
+      let params: { minLat?: number; minLon?: number; maxLat?: number; maxLon?: number; lat?: number; lng?: number; radius_km?: number } = {};
+      if (map) {
+        const bounds = map.getBounds();
+        params = {
+          minLat: bounds.getSouth(),
+          minLon: bounds.getWest(),
+          maxLat: bounds.getNorth(),
+          maxLon: bounds.getEast(),
+        };
+      }
+      const res = await fetchOsmTowers(params);
+      toast.success(
+        res.status === "fallback"
+          ? `Overpass API: loaded ${res.count} cached mobile towers`
+          : `Fetched and synced ${res.count} mobile towers from OpenStreetMap (Overpass API)`
+      );
+      loadData();
+    } catch (err: any) {
+      console.error("OSM tower fetch error:", err);
+      toast.error(err.message || "Failed to fetch mobile towers from OpenStreetMap.");
+    } finally {
+      setIsFetchingOsm(false);
+    }
+  };
+
   // Handle GeoJSON File Upload
   const handleGeoJsonFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -562,6 +593,15 @@ export default function MobileTowerLayer({
               </div>
             </div>
             <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={handleFetchOsmTowers}
+                disabled={isLoading || isFetchingOsm}
+                className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-emerald-400 transition-colors cursor-pointer"
+                title="Fetch Real Mobile Towers from OpenStreetMap (Overpass API)"
+              >
+                <Globe className={`size-3.5 ${isFetchingOsm ? "animate-spin text-emerald-400" : ""}`} />
+              </button>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}

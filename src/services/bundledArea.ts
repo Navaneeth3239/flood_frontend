@@ -5,11 +5,41 @@ type Params = Parameters<typeof extractNetworks>[0];
 export const bundledAreaVersion = manifest.map(entry => entry.sha256.slice(0, 12)).join("-");
 
 export function bundledAreaEntry(params: Params) {
-  const id = (params.area_id || params.area_key || "").replace(/^dt-area-/, "");
+  if (
+    params.north !== undefined ||
+    params.south !== undefined ||
+    params.east !== undefined ||
+    params.west !== undefined ||
+    params.lat !== undefined ||
+    params.lng !== undefined
+  ) {
+    return undefined;
+  }
+
+  const rawId = (params.area_id || params.area_key || "").replace(/^dt-area-/, "");
   // 1. Direct ID match
-  if (id) {
-    const matchById = manifest.find(entry => entry.area_id === id);
-    if (matchById) return matchById;
+  if (rawId) {
+    const matchById = manifest.find(entry => entry.area_id === rawId);
+    if (!matchById) return undefined;
+    if (params.polygon && params.polygon.length >= 3) {
+      const pLats = params.polygon.map(p => p[0]);
+      const pLngs = params.polygon.map(p => p[1]);
+      const pMinLat = Math.min(...pLats), pMaxLat = Math.max(...pLats);
+      const pMinLng = Math.min(...pLngs), pMaxLng = Math.max(...pLngs);
+      const eLats = matchById.polygon.map(p => p[0]);
+      const eLngs = matchById.polygon.map(p => p[1]);
+      const eMinLat = Math.min(...eLats), eMaxLat = Math.max(...eLats);
+      const eMinLng = Math.min(...eLngs), eMaxLng = Math.max(...eLngs);
+
+      const latOverlap = Math.max(0, Math.min(pMaxLat, eMaxLat) - Math.max(pMinLat, eMinLat));
+      const lngOverlap = Math.max(0, Math.min(pMaxLng, eMaxLng) - Math.max(pMinLng, eMinLng));
+      const overlapArea = latOverlap * lngOverlap;
+      const pArea = (pMaxLat - pMinLat) * (pMaxLng - pMinLng);
+      if (pArea > 0 && (overlapArea / pArea) < 0.4) {
+        return undefined;
+      }
+    }
+    return matchById;
   }
 
   // 2. Polygon match (exact or overlapping bounding box)
@@ -38,7 +68,7 @@ export function bundledAreaEntry(params: Params) {
     if (matchByPoly) return matchByPoly;
   }
 
-  return manifest[0] || null;
+  return undefined;
 }
 
 export async function loadBundledArea(params: Params, signal: AbortSignal): Promise<NetworkExtractionResponse | null> {
@@ -51,6 +81,9 @@ export async function loadBundledArea(params: Params, signal: AbortSignal): Prom
     const data = await response.json();
     signal.throwIfAborted();
     if (data.status !== "success") return null;
+    if (!data.buildings?.geojson?.features?.length || !data.roads?.geojson?.features?.length || !data.rivers?.geojson?.features?.length) {
+      return null;
+    }
     return data;
   } catch {
     signal.throwIfAborted();

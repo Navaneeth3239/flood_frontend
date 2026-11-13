@@ -9,7 +9,7 @@ import {
   parseCustomAreaPolygon,
   generateCirclePolygon,
 } from "@/lib/gisUtils";
-import { apiPost } from "@/lib/api";
+import { ApiError, apiPost } from "@/lib/api";
 import { toast } from "sonner";
 import {
   Ruler,
@@ -127,7 +127,7 @@ export default function GISMap({
   const overlay = useRef<L.LayerGroup | null>(null);
   const selectedFeaturesLayer = useRef<L.LayerGroup | null>(null);
   const [featureReload, setFeatureReload] = useState(0);
-  const [featureStatus, setFeatureStatus] = useState({ pending: 0, paths: 0, water: 0, buildings: 0, error: "" });
+  const [featureStatus, setFeatureStatus] = useState({ pending: 0, paths: 0, water: 0, buildings: 0, buildingSource: "", error: "" });
   const drawLayer = useRef<L.LayerGroup | null>(null);
   const searchLayer = useRef<L.LayerGroup | null>(null);
   const tiles = useRef<L.TileLayer | null>(null);
@@ -783,6 +783,8 @@ export default function GISMap({
     polygonFill.current = null;
     setLiveMetrics({ count: 0, sqMeters: 0 });
     setConfirmingPolygon(null);
+    setInternalDrawMode(false);
+    onToggleDrawMode?.(false);
   };
 
   // ─── Finish boundary and open confirmation tab (Works in Fullscreen) ─────────
@@ -828,25 +830,27 @@ export default function GISMap({
 
       const serializedShape = `Polygon:${JSON.stringify(coordsArray)}`;
 
-      let savedData: any = null;
-      try {
-        savedData = await apiPost<any>("/areas", {
+      const savedData = await apiPost<any>("/areas", {
           name: areaName,
           district: confirmForm.district || "Western Ghats",
           area_type: confirmForm.type,
           risk_category: confirmForm.risk,
           priority: confirmForm.priority,
           description: confirmForm.description || "Custom monitoring boundary",
-          lat: Number(centerLat.toFixed(4)),
-          lng: Number(centerLng.toFixed(4)),
+          lat: Number(centerLat.toFixed(6)),
+          lng: Number(centerLng.toFixed(6)),
           shape: serializedShape,
+          polygon: coordsArray,
+          bounds,
+          area_sq_meters: sqMeters,
         });
-      } catch (postErr) {
-        console.warn("Backend /areas POST warning:", postErr);
+
+      if (!savedData?.id) {
+        throw new Error("The server did not return a saved area identifier.");
       }
 
       const newArea: CustomArea = {
-        id: savedData?.id || crypto.randomUUID(),
+        id: savedData.id,
         name: areaName,
         district: confirmForm.district || "Western Ghats",
         type: confirmForm.type,
@@ -855,12 +859,12 @@ export default function GISMap({
         description: confirmForm.description,
         bounds,
         date: new Date().toLocaleDateString(),
-        lat: Number(centerLat.toFixed(4)),
-        lng: Number(centerLng.toFixed(4)),
+        lat: Number(savedData.lat ?? centerLat),
+        lng: Number(savedData.lng ?? centerLng),
         shape: "Polygon",
         polygon: coordsArray,
         areaSqMeters: sqMeters,
-        user_id: savedData?.user_id || undefined,
+        user_id: savedData.user_id || undefined,
       };
 
       if (onAreaCreatedRef.current) {
@@ -869,12 +873,15 @@ export default function GISMap({
 
       setConfirmingPolygon(null);
       clearDraw();
+      selectRef.current?.(newArea);
+      onAreaSelectedRef.current?.(latlngs, sqMeters);
       toast.success(`Monitored Area "${areaName}" confirmed & saved (${formatArea(sqMeters).combined})`);
     } catch (err: any) {
       console.error("Failed to save monitored area:", err);
-      toast.info(`Area measurement confirmed: ${formatArea(sqMeters).combined}`);
-      setConfirmingPolygon(null);
-      clearDraw();
+      const detail = err instanceof ApiError && err.body && typeof err.body === "object" && "detail" in err.body
+        ? String((err.body as { detail: unknown }).detail)
+        : err?.message || "Could not save this area.";
+      toast.error(`${detail} Your boundary is still open—check the database connection and try again.`);
     } finally {
       setIsSavingArea(false);
     }
@@ -1096,10 +1103,10 @@ export default function GISMap({
         const latlngs = coords.map((c) => L.latLng(c[0], c[1]));
 
         const poly = L.polygon(latlngs, {
-          color: isSelected ? "#0F4C81" : theme.stroke,
-          weight: isSelected ? 3 : 2,
-          fillColor: isSelected ? "#0284C7" : theme.fill,
-          fillOpacity: isSelected ? 0.35 : 0.22,
+          color: isSelected ? "#164B75" : theme.stroke,
+          weight: isSelected ? 3.5 : 2,
+          fillColor: isSelected ? "#3498DB" : theme.fill,
+          fillOpacity: isSelected ? 0.25 : 0.22,
           dashArray: isSelected ? undefined : "5 4",
         });
 
@@ -1172,13 +1179,14 @@ export default function GISMap({
         group.addLayer(poly);
 
         // Center badge label
-        if (layers.boundaries) {
+        if (layers.boundaries || layers.areaLabels) {
           group.addLayer(
             L.marker([area.lat, area.lng], {
               icon: L.divIcon({
                 className: "",
-                html: `<div style="white-space:nowrap;transform:translate(-50%,-120%);background:#0B2545;color:#fff;font:600 10px/1.3 'IBM Plex Sans',sans-serif;padding:3px 7px;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.25);cursor:pointer;">
-                  ${area.name} <span style="color:#7DD3FC;font-size:9px;font-weight:500;">(${areaFormatted.brief})</span>
+                html: `<div style="white-space:nowrap;transform:translate(-50%,-50%);background:#0B2545;color:#fff;font:700 11px/1.3 'IBM Plex Sans',sans-serif;padding:4px 9px;border-radius:6px;box-shadow:0 3px 10px rgba(0,0,0,0.35);border:1.5px solid rgba(255,255,255,0.3);cursor:pointer;display:inline-flex;align-items:center;gap:5px;">
+                  <span>${area.name}</span>
+                  <span style="color:#7DD3FC;font-size:9px;font-weight:500;">(${areaFormatted.brief})</span>
                 </div>`,
                 iconSize: [0, 0],
               }),
@@ -1201,7 +1209,7 @@ export default function GISMap({
     if (!selectedAreaCoords || selectedAreaCoords.length < 3) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(750_000)]);
-    setFeatureStatus({ pending: 2, paths: 0, water: 0, buildings: 0, error: "" });
+    setFeatureStatus({ pending: 2, paths: 0, water: 0, buildings: 0, buildingSource: "", error: "" });
     const failed = (name: string) => {
       if (!controller.signal.aborted) setFeatureStatus(current => ({ ...current, error: current.error + name + " unavailable. " }));
     };
@@ -1214,10 +1222,10 @@ export default function GISMap({
       const roads = result.roads.geojson.features;
       const water = result.rivers.geojson.features;
       L.geoJSON({ type: "FeatureCollection", features: roads } as GeoJSON.FeatureCollection, {
-        style: { color: "#f59e0b", weight: 3, opacity: 0.95 }, interactive: false,
+        style: { color: "#FB8C00", weight: 3, opacity: 0.95 }, interactive: false,
       }).addTo(group);
       L.geoJSON({ type: "FeatureCollection", features: water } as GeoJSON.FeatureCollection, {
-        style: { color: "#0284c7", weight: 3, fillColor: "#38bdf8", fillOpacity: 0.4 }, interactive: false,
+        style: { color: "#1976D2", weight: 3, fillColor: "#1976D2", fillOpacity: 0.6 }, interactive: false,
       }).addTo(group);
       setFeatureStatus(current => ({ ...current, paths: roads.length, water: water.length }));
       if (result.osm_loading?.complete === false) failed("Some network layers");
@@ -1225,9 +1233,10 @@ export default function GISMap({
     void loadSelectedAreaBuildings(selectedAreaCoords, controller.signal, undefined, selectedArea?.id).then(buildings => {
       if (controller.signal.aborted) return;
       L.geoJSON({ type: "FeatureCollection", features: buildings } as GeoJSON.FeatureCollection, {
-        style: { color: "#c2410c", weight: 1, fillColor: "#f97316", fillOpacity: 0.65 }, interactive: false,
+        style: { color: "#B71C1C", weight: 1, fillColor: "#E53935", fillOpacity: 0.75 }, interactive: false,
       }).addTo(group);
-      setFeatureStatus(current => ({ ...current, buildings: buildings.length }));
+      const source = buildings.find((building) => building.properties?.source)?.properties?.source || "provider not reported";
+      setFeatureStatus(current => ({ ...current, buildings: buildings.length, buildingSource: source }));
     }).catch(() => failed("Buildings")).finally(finish);
     return () => { controller.abort(); group.clearLayers(); };
   }, [selectedAreaCoords, selectedArea?.id, mapInstance, featureReload]);
@@ -1240,6 +1249,7 @@ export default function GISMap({
       <div ref={holder} style={{ height: "100%", width: "100%" }} className="z-0 rounded-lg" data-testid={testId} />
       {selectedAreaCoords && <div role="status" aria-label="Selected GIS area layers" className="absolute right-3 top-16 z-[1000] rounded-lg bg-white/95 p-3 text-xs text-slate-800 shadow-lg">
         <div>{featureStatus.paths} paths · {featureStatus.water} rivers / water bodies · {featureStatus.buildings} buildings</div>
+        {featureStatus.buildingSource && <div className="mt-0.5 text-[10px] text-slate-600">Building data: {featureStatus.buildingSource}</div>}
         <div>{featureStatus.pending ? "Loading mapped features…" : featureStatus.error ? "Map data incomplete" : "Available mapped features loaded"}</div>
         {featureStatus.error && <div className="text-amber-700">{featureStatus.error}<button type="button" className="underline" onClick={() => setFeatureReload(value => value + 1)}>Retry layers</button></div>}
       </div>}
